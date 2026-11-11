@@ -1,0 +1,25 @@
+/* === macOS Tahoe Clean Typography (Inter Webfont · Zero Corrupted Local SF Pro Glyphs) === */
+:root {
+  --font-sans: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+  --font-mono: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+  --tahoe-border-light: rgba(15, 23, 42, 0.08);
+  --tahoe-border-dark: rgba(255, 255, 255, 0.08);
+}
+
+*, *::before, *::after,
+html, body, #root, #app, button, input, select, textarea, code, pre, kbd, samp, td, th, span, div, p, h1, h2, h3, h4 {
+  font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+  font-feature-settings: "liga" 0, "clig" 0, "calt" 0 !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+}
+
+/* Eliminare etichete cu aspect robotizat (tracking exagerat) */
+[class*="tracking-widest"],
+[class*="tracking-wider"],
+[class*="tracking-wide"],
+[class*="tracking-["],
+.uppercase {
+  letter-spacing: -0.005em !important;
+}
+

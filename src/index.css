@@ -1,0 +1,839 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@layer base {
+  :root {
+    --font-sans: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --tabular-nums: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #070b14;
+    color: #f5f5f7;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  code, pre, .tabular-nums {
+    font-family: var(--tabular-nums);
+  }
+}
+
+/* macOS Tahoe (macOS 26) Ambient Wallpaper Mesh */
+.tahoe-wallpaper {
+  background-color: #060913;
+  background-image:
+    radial-gradient(at 12% 10%, rgba(10, 132, 255, 0.22) 0px, transparent 48%),
+    radial-gradient(at 88% 14%, rgba(94, 92, 230, 0.20) 0px, transparent 45%),
+    radial-gradient(at 50% 88%, rgba(48, 209, 88, 0.12) 0px, transparent 52%),
+    radial-gradient(at 82% 75%, rgba(100, 210, 255, 0.12) 0px, transparent 45%);
+  background-attachment: fixed;
+}
+
+/* macOS Tahoe Liquid Glass Surfaces */
+.tahoe-glass {
+  background: linear-gradient(145deg, rgba(28, 36, 56, 0.68) 0%, rgba(17, 23, 38, 0.78) 100%);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 16px 40px -12px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.18);
+}
+
+.tahoe-glass-elevated {
+  background: linear-gradient(145deg, rgba(38, 49, 76, 0.72) 0%, rgba(22, 30, 50, 0.82) 100%);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 20px 50px -12px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.24);
+}
+
+.tahoe-card-inner {
+  background: rgba(12, 17, 30, 0.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+
+.planning-card-map-mask {
+  background: linear-gradient(
+    90deg,
+    rgba(12, 17, 30, 0.92) 0%,
+    rgba(12, 17, 30, 0.74) 48%,
+    rgba(12, 17, 30, 0.28) 100%
+  );
+}
+
+[data-theme="light"] .planning-card-map-mask {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.93) 0%,
+    rgba(255, 255, 255, 0.68) 45%,
+    rgba(255, 255, 255, 0.12) 100%
+  ) !important;
+}
+
+.tahoe-pill-nav {
+  background: rgba(15, 21, 36, 0.78);
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.75),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.22);
+}
+
+.tahoe-btn-primary {
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #1a8cff 0%, #007aff 100%);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow:
+    0 6px 20px -4px rgba(0, 122, 255, 0.55),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.35);
+}
+
+.tahoe-btn-primary:hover {
+  background: linear-gradient(180deg, #3399ff 0%, #0a84ff 100%);
+}
+
+.tahoe-btn-secondary {
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.14);
+}
+
+.tahoe-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+/* Accessible Capsule Tabs — styled directly from aria-selected with non-color border indicator */
+[role="tab"] {
+  position: relative;
+  border-radius: 9999px;
+}
+
+[role="tab"][aria-selected="true"] {
+  background: linear-gradient(180deg, #1a8cff 0%, #007aff 100%) !important;
+  border-color: #0a84ff !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 6px 18px -4px rgba(10, 132, 255, 0.45),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.32) !important;
+}
+
+[role="tab"][aria-selected="true"] > svg,
+[role="tab"][aria-selected="true"] > span:not(.demo-badge) {
+  color: #ffffff !important;
+}
+
+[role="tab"][aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 14px 2.5px;
+  border-block-end: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 9999px;
+  pointer-events: none;
+}
+
+@media (forced-colors: active) {
+  [role="tab"][aria-selected="true"]::after {
+    border-block-end-color: Highlight;
+  }
+}
+
+/* Leaflet OpenStreetMap Customization (100% Free OSM, No API Key) */
+.leaflet-container {
+  background-color: #dbeafe !important;
+  font-family: var(--font-sans) !important;
+}
+
+.leaflet-control-zoom {
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 9999px !important;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-control-zoom a {
+  background: rgba(18, 25, 43, 0.85) !important;
+  backdrop-filter: blur(16px);
+  color: #f5f5f7 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  width: 32px !important;
+  height: 32px !important;
+  line-height: 32px !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: rgba(10, 132, 255, 0.5) !important;
+  color: #ffffff !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(10, 14, 24, 0.65) !important;
+  color: rgba(255, 255, 255, 0.35) !important;
+  font-size: 9px !important;
+  border-radius: 8px 0 0 0;
+  padding: 2px 6px !important;
+}
+
+.leaflet-control-attribution a {
+  color: rgba(100, 210, 255, 0.6) !important;
+}
+
+/* Hide scrollbars on horizontal mobile pill bars */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Subtle macOS scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+
+/* === macOS Tahoe Clean Typography (Inter Webfont & Tabular Numerals) === */
+:root {
+  --font-sans: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --tabular-nums: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html, body, #root, button, input, select, textarea {
+  font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-feature-settings: "liga" 0, "clig" 0, "calt" 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.tabular-nums,
+[class*="tabular-nums"],
+code, pre, kbd, samp {
+  font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 768px) {
+  html, body {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+}
+
+/* ============================================================================
+   macOS Tahoe LIGHT MODE (`[data-theme="light"]`) — Complete High-Contrast Skin
+============================================================================ */
+html[data-theme="light"] body,
+[data-theme="light"].tahoe-wallpaper,
+[data-theme="light"] .tahoe-wallpaper {
+  background-color: #eef2f7 !important;
+  background-image:
+    radial-gradient(at 12% 10%, rgba(2, 132, 199, 0.10) 0px, transparent 48%),
+    radial-gradient(at 88% 14%, rgba(99, 102, 241, 0.08) 0px, transparent 45%),
+    radial-gradient(at 50% 88%, rgba(22, 163, 74, 0.07) 0px, transparent 52%) !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] aside,
+[data-theme="light"] header {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(15, 23, 42, 0.11) !important;
+  color: #0f172a !important;
+  box-shadow: 0 4px 20px -4px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] .tahoe-glass {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.97) 0%, rgba(248, 250, 252, 0.99) 100%) !important;
+  border: 1px solid rgba(15, 23, 42, 0.11) !important;
+  box-shadow:
+    0 10px 28px -10px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 0 rgba(255, 255, 255, 1) !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .tahoe-glass-elevated {
+  background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%) !important;
+  border: 1px solid rgba(15, 23, 42, 0.14) !important;
+  box-shadow:
+    0 14px 34px -10px rgba(15, 23, 42, 0.11),
+    inset 0 1px 0 0 rgba(255, 255, 255, 1) !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .tahoe-card-inner {
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.05) !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .tahoe-pill-nav {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border: 1px solid rgba(15, 23, 42, 0.14) !important;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16) !important;
+}
+
+[data-theme="light"] .tahoe-btn-secondary:not([aria-selected="true"]) {
+  background: #f1f5f9 !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #0f172a !important;
+  box-shadow: none !important;
+}
+
+[data-theme="light"] .tahoe-btn-secondary:not([aria-selected="true"]):hover {
+  background: #e2e8f0 !important;
+}
+
+[data-theme="light"] [role="tab"][aria-selected="true"] {
+  background: linear-gradient(180deg, #1a8cff 0%, #007aff 100%) !important;
+  border-color: #0a84ff !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 6px 18px -4px rgba(10, 132, 255, 0.40),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.35) !important;
+}
+
+[data-theme="light"] [role="tab"][aria-selected="true"] > svg,
+[data-theme="light"] [role="tab"][aria-selected="true"] > span:not(.demo-badge) {
+  color: #ffffff !important;
+}
+
+/* Inner recessed boxes (`bg-black/30`, etc. that are NOT fixed modal overlays) -> clean light slate `#f8fafc` instead of muddy gray */
+[data-theme="light"] .bg-black\/30:not(.fixed),
+[data-theme="light"] .bg-black\/35:not(.fixed),
+[data-theme="light"] .bg-black\/40:not(.fixed),
+[data-theme="light"] .bg-black\/45:not(.fixed),
+[data-theme="light"] .bg-black\/50:not(.fixed),
+[data-theme="light"] .bg-black\/60:not(.fixed) {
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* Hardcoded dark containers & cards (`#0e1526`, `#090d16`, `#111827`, `#0b101d`, `#141d33`, `#151e34`, `#161f33`) */
+[data-theme="light"] .bg-\[\#0e1526\],
+[data-theme="light"] .bg-\[\#090d16\],
+[data-theme="light"] .bg-\[\#111827\],
+[data-theme="light"] .bg-slate-900,
+[data-theme="light"] .bg-slate-900\/90,
+[data-theme="light"] .bg-slate-900\/80,
+[data-theme="light"] .bg-slate-900\/75,
+[data-theme="light"] .bg-slate-900\/60,
+[data-theme="light"] .bg-slate-950\/70,
+[data-theme="light"] .bg-slate-950\/60,
+[data-theme="light"] .bg-slate-950\/50 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  box-shadow: 0 4px 16px -4px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] .bg-\[\#0b101d\],
+[data-theme="light"] .bg-\[\#141d33\],
+[data-theme="light"] .bg-\[\#151e34\],
+[data-theme="light"] .bg-\[\#161f33\],
+[data-theme="light"] .bg-slate-800 {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .bg-emerald-950\/70 {
+  background-color: #ecfdf5 !important;
+  border-color: #6ee7b7 !important;
+  color: #065f46 !important;
+}
+
+/* Subtle translucent white pills & buttons -> subtle slate tint in Light Mode */
+[data-theme="light"] .bg-white\/5,
+[data-theme="light"] .bg-white\/8,
+[data-theme="light"] .bg-white\/10,
+[data-theme="light"] .bg-white\/12,
+[data-theme="light"] .bg-white\/14,
+[data-theme="light"] .bg-white\/15,
+[data-theme="light"] .bg-white\/20,
+[data-theme="light"] .bg-white\/\[0\.02\],
+[data-theme="light"] .bg-white\/\[0\.03\],
+[data-theme="light"] .bg-white\/\[0\.04\],
+[data-theme="light"] .bg-white\/\[0\.05\],
+[data-theme="light"] .bg-white\/\[0\.06\],
+[data-theme="light"] .bg-white\/\[0\.08\],
+[data-theme="light"] .bg-white\/\[0\.1\],
+[data-theme="light"] .bg-white\/\[0\.14\] {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Inputs, selects & textareas in Light Mode */
+[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+[data-theme="light"] select,
+[data-theme="light"] textarea {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] input::placeholder,
+[data-theme="light"] textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Automatic High-Contrast Typography in Light Mode */
+[data-theme="light"] .text-white,
+[data-theme="light"] .text-\[\#f5f5f7\],
+[data-theme="light"] .text-slate-100,
+[data-theme="light"] .text-slate-200 {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .text-white\/95,
+[data-theme="light"] .text-white\/90,
+[data-theme="light"] .text-white\/85,
+[data-theme="light"] .text-white\/80,
+[data-theme="light"] .text-white\/75,
+[data-theme="light"] .text-white\/70,
+[data-theme="light"] .text-slate-300 {
+  color: #1e293b !important;
+}
+
+[data-theme="light"] .text-white\/65,
+[data-theme="light"] .text-white\/60,
+[data-theme="light"] .text-white\/55,
+[data-theme="light"] .text-white\/50,
+[data-theme="light"] .text-white\/45,
+[data-theme="light"] .text-white\/40,
+[data-theme="light"] .text-white\/30,
+[data-theme="light"] .text-slate-400 {
+  color: #475569 !important;
+}
+
+/* High-contrast semantic accents on Light Mode (never washed-out pastel or yellow-on-white) */
+[data-theme="light"] .text-\[\#64D2FF\],
+[data-theme="light"] .text-\[\#64D2FF\]\/90,
+[data-theme="light"] .text-sky-200,
+[data-theme="light"] .text-sky-300,
+[data-theme="light"] .text-sky-400,
+[data-theme="light"] .text-cyan-300,
+[data-theme="light"] .text-cyan-400 {
+  color: #0369a1 !important;
+}
+
+[data-theme="light"] .text-\[\#0A84FF\],
+[data-theme="light"] .text-blue-300,
+[data-theme="light"] .text-blue-400 {
+  color: #1d4ed8 !important;
+}
+
+[data-theme="light"] .text-\[\#30D158\],
+[data-theme="light"] .text-emerald-200,
+[data-theme="light"] .text-emerald-300,
+[data-theme="light"] .text-emerald-400 {
+  color: #047857 !important;
+}
+
+[data-theme="light"] .text-\[\#FF9F0A\],
+[data-theme="light"] .text-\[\#FFD60A\],
+[data-theme="light"] .text-amber-300,
+[data-theme="light"] .text-amber-400 {
+  color: #b45309 !important;
+}
+
+[data-theme="light"] .text-\[\#5E5CE6\],
+[data-theme="light"] .text-indigo-300,
+[data-theme="light"] .text-indigo-400 {
+  color: #4338ca !important;
+}
+
+[data-theme="light"] .text-purple-300,
+[data-theme="light"] .text-\[\#d8b4fe\] {
+  color: #6d28d9 !important;
+}
+
+[data-theme="light"] .text-\[\#f472b6\] {
+  color: #be185d !important;
+}
+
+[data-theme="light"] .text-\[\#FF453A\],
+[data-theme="light"] .text-red-300,
+[data-theme="light"] .text-red-400,
+[data-theme="light"] .text-rose-300,
+[data-theme="light"] .text-rose-400 {
+  color: #be123c !important;
+}
+
+/* Preserve white text on solid primary/colored buttons & active badges in Light Mode */
+[data-theme="light"] .tahoe-btn-primary,
+[data-theme="light"] .tahoe-btn-primary *,
+[data-theme="light"] .bg-\[\#0A84FF\],
+[data-theme="light"] .bg-\[\#0A84FF\] *,
+[data-theme="light"] .bg-\[\#007AFF\],
+[data-theme="light"] .bg-\[\#007AFF\] *,
+[data-theme="light"] .bg-\[\#0284c7\],
+[data-theme="light"] .bg-\[\#0284c7\] *,
+[data-theme="light"] .bg-indigo-600,
+[data-theme="light"] .bg-indigo-600 *,
+[data-theme="light"] .bg-indigo-500,
+[data-theme="light"] .bg-indigo-500 *,
+[data-theme="light"] .bg-emerald-600,
+[data-theme="light"] .bg-emerald-600 *,
+[data-theme="light"] .bg-emerald-500,
+[data-theme="light"] .bg-emerald-500 *,
+[data-theme="light"] .bg-\[\#30D158\],
+[data-theme="light"] .bg-\[\#30D158\] *,
+[data-theme="light"] .bg-blue-600,
+[data-theme="light"] .bg-blue-600 *,
+[data-theme="light"] .bg-blue-500,
+[data-theme="light"] .bg-blue-500 *,
+[data-theme="light"] .bg-rose-500,
+[data-theme="light"] .bg-rose-500 *,
+[data-theme="light"] [role="tab"][aria-selected="true"],
+[data-theme="light"] [role="tab"][aria-selected="true"] *:not(.demo-badge) {
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .bg-\[\#0A84FF\] .bg-white\/20,
+[data-theme="light"] .bg-\[\#0A84FF\] .bg-white\/15,
+[data-theme="light"] .tahoe-btn-primary .bg-white\/20,
+[data-theme="light"] .tahoe-btn-primary .bg-white\/15 {
+  background-color: rgba(15, 23, 42, 0.25) !important;
+  color: #ffffff !important;
+}
+
+/* Preserve dark text inside Euro-RO white license plates even when inside selected blue buttons */
+.euro-ro-plate-num,
+[data-theme="light"] .euro-ro-plate-num,
+[data-theme="light"] .bg-\[\#0A84FF\] .euro-ro-plate-num,
+[data-theme="light"] .bg-\[\#007AFF\] .euro-ro-plate-num,
+[data-theme="light"] .tahoe-btn-primary .euro-ro-plate-num,
+[data-theme="light"] .bg-\[\#0A84FF\] [style*="background-color: rgb(255, 255, 255)"],
+[data-theme="light"] .bg-\[\#0A84FF\] [style*="background-color:#ffffff"],
+[data-theme="light"] .bg-\[\#0A84FF\] [style*="background-color: #ffffff"] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.euro-ro-plate-star,
+[data-theme="light"] .bg-\[\#0A84FF\] .euro-ro-plate-star,
+[data-theme="light"] .tahoe-btn-primary .euro-ro-plate-star {
+  color: #ffcc00 !important;
+}
+
+/* Light mode borders & table dividers */
+[data-theme="light"] .border-white\/5,
+[data-theme="light"] .border-white\/8,
+[data-theme="light"] .border-white\/10,
+[data-theme="light"] .border-white\/15,
+[data-theme="light"] .border-white\/20,
+[data-theme="light"] .border-white\/25,
+[data-theme="light"] .border-white\/\[0\.06\],
+[data-theme="light"] .border-white\/\[0\.07\],
+[data-theme="light"] .border-white\/\[0\.08\],
+[data-theme="light"] .border-slate-700,
+[data-theme="light"] .border-slate-700\/80,
+[data-theme="light"] .border-slate-800,
+[data-theme="light"] .border-slate-800\/80 {
+  border-color: #e2e8f0 !important;
+}
+
+[data-theme="light"] .divide-white\/10 > :not([hidden]) ~ :not([hidden]),
+[data-theme="light"] .divide-slate-800\/80 > :not([hidden]) ~ :not([hidden]),
+[data-theme="light"] .divide-slate-800 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+[data-theme="light"] .hover\:bg-\[\#161f33\]:hover {
+  background-color: #f8fafc !important;
+}
+
+[data-theme="light"] .hover\:bg-slate-800:hover {
+  background-color: #e2e8f0 !important;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.22);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.35);
+}
+
+/* ============================================================================
+   MODAL BACKGROUND SCROLL LOCK (Oprește scroll-ul paginii în spatele ferestrelor)
+   ============================================================================ */
+html:has(.fixed.inset-0.z-50),
+body:has(.fixed.inset-0.z-50),
+html:has(.modal-backdrop-lock),
+body:has(.modal-backdrop-lock),
+html:has(dialog[open]),
+body:has(dialog[open]),
+body.modal-scroll-locked {
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+}
+
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+dialog.fleet-pdf-dialog::backdrop {
+  background-color: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Hide default Leaflet top-left zoom control so only the single on-map control bar is shown */
+.leaflet-control-zoom {
+  display: none !important;
+}
+
+/* AccuWeather / Windy style animated wind streamlines & radar glow on Leaflet SVG paths */
+@keyframes windStreamFlow {
+  from {
+    stroke-dashoffset: 36;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.accuweather-wind-stream {
+  stroke-dasharray: 10 8;
+  animation: windStreamFlow 1.25s linear infinite;
+}
+
+.accuweather-radar-cell {
+  filter: blur(5px);
+}
+
+
+
+
+
+/* Avertisment (ex. Soft-Lock) în fereastra „Unde pun comanda?” — lizibil în ambele teme */
+.ldm-warning-box {
+  background-color: rgba(217, 119, 6, 0.22);
+  color: #fde68a;
+}
+[data-theme="light"] .ldm-warning-box {
+  background-color: rgba(217, 119, 6, 0.14);
+  color: #92400e;
+}
+
+/* Antetul tabelului „Mașinile mele” (vederea Listă) — stil Finder, ambele teme */
+.fleet-list-th {
+  background-color: rgba(15, 23, 42, 0.92) !important;
+  color: rgba(255, 255, 255, 0.65) !important;
+}
+.fleet-list-th button[data-active="true"] {
+  color: #64d2ff !important;
+}
+[data-theme="light"] .fleet-list-th {
+  background-color: rgba(246, 247, 251, 0.94) !important;
+  color: rgba(15, 23, 42, 0.62) !important;
+  border-bottom-color: rgba(15, 23, 42, 0.14) !important;
+}
+[data-theme="light"] .fleet-list-th button:hover {
+  color: #0f172a !important;
+}
+[data-theme="light"] .fleet-list-th button[data-active="true"] {
+  color: #0a84ff !important;
+}
+
+/* Pastilă DEMO — vizibilă în ambele teme */
+.demo-badge,
+[data-theme="light"] .demo-badge,
+[data-theme="light"] .bg-\[\#0A84FF\] .demo-badge,
+[data-theme="light"] .tahoe-btn-primary .demo-badge {
+  background: #fff3cd !important;
+  color: #7a4a00 !important;
+  border: 1px solid #f0b429 !important;
+}
+
+/* ============================================================================
+   Dynamic Brand Logo — Blue Trans Spedition (Original Vector + Highway Motion)
+============================================================================ */
+.bts-dynamic-logo {
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), filter 240ms ease;
+  filter: drop-shadow(0 4px 14px rgba(56, 182, 255, 0.22));
+}
+
+.bts-dynamic-logo:hover {
+  transform: translateY(-1px) scale(1.02);
+  filter: drop-shadow(0 6px 20px rgba(56, 182, 255, 0.38));
+}
+
+.bts-brand-letters {
+  fill: #e2e8f0;
+  transition: fill 200ms ease;
+}
+
+[data-theme="light"] .bts-brand-letters {
+  fill: #004aad;
+}
+
+[data-theme="light"] .bts-dynamic-logo {
+  filter: drop-shadow(0 3px 10px rgba(0, 74, 173, 0.14));
+}
+
+[data-theme="light"] .bts-dynamic-logo:hover {
+  filter: drop-shadow(0 6px 16px rgba(2, 132, 199, 0.26));
+}
+
+.bts-truck-rig {
+  animation: btsRigCruise 2.8s ease-in-out infinite;
+  transform-origin: 195px 175px;
+  transition: transform 260ms ease;
+}
+
+.bts-dynamic-logo:hover .bts-truck-rig {
+  animation-duration: 1.5s;
+}
+
+.bts-speed-streak {
+  animation: btsSlipstream 1.7s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: right center;
+}
+
+.bts-speed-streak-1 { animation-delay: 0s; }
+.bts-speed-streak-2 { animation-delay: 0.22s; }
+.bts-speed-streak-3 { animation-delay: 0.44s; }
+.bts-speed-streak-4 { animation-delay: 0.66s; }
+
+.bts-wind-arc {
+  animation: btsWindArc 2.3s ease-in-out infinite;
+}
+
+.bts-sheen-bar {
+  animation: btsSheenSweep 4.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.bts-road-stream {
+  stroke-dasharray: 20 14;
+  opacity: 0.48;
+  animation: btsRoadFlow 0.95s linear infinite;
+}
+
+@keyframes btsRigCruise {
+  0%, 100% { transform: translate(0px, 0px); }
+  50% { transform: translate(1.1px, -1.1px); }
+}
+
+@keyframes btsSlipstream {
+  0%, 100% {
+    opacity: 0.42;
+    transform: translateX(0px) scaleX(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(-4.5px) scaleX(1.05);
+  }
+}
+
+@keyframes btsWindArc {
+  0%, 100% { opacity: 0.78; transform: translateX(0px); }
+  50% { opacity: 1; transform: translateX(-1.8px); }
+}
+
+@keyframes btsSheenSweep {
+  0%, 18% { transform: translateX(0px) skewX(-18deg); }
+  52%, 100% { transform: translateX(620px) skewX(-18deg); }
+}
+
+@keyframes btsRoadFlow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: 34; }
+}
+
+/* Badge SFERLE TMS PRO adaptiv dark/light */
+.sferle-brand-title {
+  color: #f8fafc;
+}
+[data-theme="light"] .sferle-brand-title {
+  color: #0f172a;
+}
+
+/* Native Calendar Date Input (.tms-calendar-input) — theme-aware popup & zero duplicate icon */
+.tms-calendar-input {
+  color-scheme: dark;
+  min-height: 38px;
+}
+
+[data-theme="light"] .tms-calendar-input {
+  color-scheme: light;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.tms-calendar-input::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  width: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+.tms-calendar-input:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 1px;
+}
+
+/* Live Romania Header Clock Capsule (.ro-live-clock-pill) — Dark & Light Mode */
+.ro-live-clock-pill {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.06) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 2px 10px -2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.16);
+}
+
+[data-theme="light"] .ro-live-clock-pill {
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%) !important;
+  border: 1px solid #cbd5e1 !important;
+  box-shadow:
+    0 2px 8px -2px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 0 #ffffff !important;
+}
+
+[data-theme="light"] .ro-clock-divider {
+  background-color: #cbd5e1 !important;
+}
+
+/* Native datetime-local inputs in Dark & Light Mode */
+input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
+[data-theme="light"] input[type="datetime-local"] {
+  color-scheme: light;
+}
