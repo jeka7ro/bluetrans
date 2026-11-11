@@ -244,6 +244,8 @@ export function normalizePlaceKey(raw: string): string {
     .trim();
 }
 
+const LEARNED_PLACES_STORAGE_KEY = 'bluetrans_learned_places_v1';
+
 const LEARNED_PLACE_COORDS = new Map<string, [number, number]>(
   EUROPEAN_LOGISTICS_PLACES.flatMap((p) => {
     const coords: [number, number] = [p.lat, p.lng];
@@ -253,6 +255,31 @@ const LEARNED_PLACE_COORDS = new Map<string, [number, number]>(
     ];
   })
 );
+
+if (typeof window !== 'undefined') {
+  try {
+    const raw = window.localStorage.getItem(LEARNED_PLACES_STORAGE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+          if (
+            Array.isArray(v) &&
+            v.length === 2 &&
+            typeof v[0] === 'number' &&
+            typeof v[1] === 'number' &&
+            Number.isFinite(v[0]) &&
+            Number.isFinite(v[1])
+          ) {
+            LEARNED_PLACE_COORDS.set(k, [v[0], v[1]]);
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore storage read errors
+  }
+}
 
 export function registerLearnedPlaceCoords(place: {
   city: string;
@@ -267,6 +294,22 @@ export function registerLearnedPlaceCoords(place: {
   if (place.fullAddress) {
     const addrKey = normalizePlaceKey(place.fullAddress);
     if (addrKey) LEARNED_PLACE_COORDS.set(addrKey, coords);
+    const shortSeg = normalizePlaceKey(place.fullAddress.split(',')[0] || '');
+    if (shortSeg) LEARNED_PLACE_COORDS.set(shortSeg, coords);
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const persistedObj: Record<string, [number, number]> = {};
+      for (const [k, v] of LEARNED_PLACE_COORDS.entries()) {
+        persistedObj[k] = v;
+      }
+      window.localStorage.setItem(
+        LEARNED_PLACES_STORAGE_KEY,
+        JSON.stringify(persistedObj)
+      );
+    } catch {
+      // ignore storage quota errors
+    }
   }
 }
 

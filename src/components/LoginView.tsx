@@ -1,574 +1,478 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Truck,
+  User,
   Lock,
-  Mail,
-  KeyRound,
-  ShieldCheck,
-  Navigation,
-  UserCheck,
-  ArrowRight,
+  Eye,
+  EyeOff,
   Sun,
   Moon,
-  Radio,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
-import { TrailerUnit } from '../data/mockData';
-import { UserRoleType } from '../App';
-import { LanguageToggleBar } from '../i18n/i18n';
 import { DynamicBrandLogo } from './DynamicBrandLogo';
+import { LanguageToggleBar } from '../i18n/i18n';
+import {
+  AuthUserRecord,
+  InvitePreviewInfo,
+  apiAcceptInvite,
+  apiFetchInvitePreview,
+  apiLoginWithPassword,
+  getRememberedIdentifier,
+  saveStoredAuthSession,
+  setRememberedIdentifier,
+} from '../data/authClient';
 
 interface LoginViewProps {
-  trailers: TrailerUnit[];
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
-  onLoginSuccess: (
-    role: UserRoleType,
-    userName: string,
-    userEmail: string,
-    driverTrailerId?: string
-  ) => void;
+  onAuthenticated: (user: AuthUserRecord, token: string, remember: boolean) => void;
 }
 
-interface PresetAccount {
-  id: string;
-  role: UserRoleType;
-  roleBadge: string;
-  name: string;
-  email: string;
-  pinOrPass: string;
-  department: string;
-  permissionsSummary: string;
-  trailerId?: string;
-}
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: 'Administrator',
+  DISPECER: 'Dispecer',
+  FINANCIAR: 'Financiar',
+  SOFER: 'Șofer',
+};
 
 export const LoginView: React.FC<LoginViewProps> = ({
-  trailers,
   theme,
   onToggleTheme,
-  onLoginSuccess,
+  onAuthenticated,
 }) => {
-  const [loginCategory, setLoginCategory] = useState<'STAFF' | 'DRIVER'>('STAFF');
-  const [selectedRole, setSelectedRole] = useState<UserRoleType>('ADMIN');
-  const [emailInput, setEmailInput] = useState<string>('alexandru.ionescu@bluetrans.ro');
-  const [passwordInput, setPasswordInput] = useState<string>('BlueTrans2026!');
-  const [selectedDriverPlate, setSelectedDriverPlate] = useState<string>(
-    trailers[0]?.id || 'BH 67 STS'
-  );
-  const [driverPin, setDriverPin] = useState<string>('6701');
+  const [inviteToken, setInviteToken] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    return new URLSearchParams(window.location.search).get('invite')?.trim() || '';
+  });
+  const [inviteInfo, setInviteInfo] = useState<InvitePreviewInfo | null>(null);
+  const [inviteLoading, setInviteLoading] = useState<boolean>(Boolean(inviteToken));
+
+  const [identifier, setIdentifier] = useState<string>(() => getRememberedIdentifier());
+  const [password, setPassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [rememberMe, setRememberMe] = useState<boolean>(true);
+
+  const [inviteName, setInviteName] = useState<string>('');
+  const [inviteUsername, setInviteUsername] = useState<string>('');
+
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const staffAccounts: PresetAccount[] = [
-    {
-      id: 'acc-admin',
-      role: 'ADMIN',
-      roleBadge: 'ADMINISTRATOR GENERAL',
-      name: 'Alexandru Ionescu',
-      email: 'alexandru.ionescu@bluetrans.ro',
-      pinOrPass: 'BlueTrans2026!',
-      department: 'Director Operațiuni & Flotă · Oradea (BH)',
-      permissionsSummary:
-        'Acces integral: Control Center, Planning 7 Zile, Smart Groupage, Smart Trailer Swap, Oferte Clienți, Facturare, Analiză și Supervizare Șoferi.',
-    },
-    {
-      id: 'acc-disp-vest',
-      role: 'DISPECER',
-      roleBadge: 'ADMIN CURSĂ / DISPECER VEST',
-      name: 'Elena Munteanu',
-      email: 'elena.munteanu@bluetrans.ro',
-      pinOrPass: 'DispecerVest26!',
-      department: 'Admin Cursă Coridor AT / DE / NL (BH 67 STS, BH 69 STS, BH 74 STS)',
-      permissionsSummary:
-        'Coordonează cursele atribuite, Planning 7 Zile, Grupaje, Trailer Swap și transmite instrucțiuni tehnice directe către șoferi.',
-    },
-    {
-      id: 'acc-disp-nord',
-      role: 'DISPECER',
-      roleBadge: 'ADMIN CURSĂ / DISPECER NORD & EXPRESS',
-      name: 'Radu Cristea',
-      email: 'radu.cristea@bluetrans.ro',
-      pinOrPass: 'DispecerNord26!',
-      department: 'Admin Cursă Scandinavia & Express (BH 75 STS, BH 91 STS, BH 23/31 STS)',
-      permissionsSummary:
-        'Coordonează cursele spre Danemarca/Suedia și divizia Express 3.5T/7.5T, inclusiv comunicarea cu șoferii din cabină.',
-    },
-    {
-      id: 'acc-fin',
-      role: 'FINANCIAR',
-      roleBadge: 'FINANCIAR & FACTURARE CMR',
-      name: 'Anca Marinescu',
-      email: 'anca.marinescu@bluetrans.ro',
-      pinOrPass: 'Financiar2026!',
-      department: 'Contabilitate, Validare CMR & Profitabilitate Curse',
-      permissionsSummary:
-        'Acces dedicat pe Oferte Clienți (marjă & contribuție netă), Comenzi & CMR, Flotă & Emitere Facturi.',
-    },
-  ];
+  useEffect(() => {
+    if (!inviteToken) {
+      setInviteInfo(null);
+      setInviteLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setInviteLoading(true);
+    setErrorMsg(null);
+    apiFetchInvitePreview(inviteToken)
+      .then((info) => {
+        if (cancelled) return;
+        setInviteInfo(info);
+        setInviteName(info.name || '');
+        setInviteUsername(info.username || '');
+        setInviteLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setInviteInfo(null);
+        setInviteLoading(false);
+        setErrorMsg(
+          err instanceof Error
+            ? err.message
+            : 'Linkul de invitație nu este valid sau a expirat.'
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteToken]);
 
-  const handleSelectStaffPreset = (acc: PresetAccount) => {
-    setLoginCategory('STAFF');
-    setSelectedRole(acc.role);
-    setEmailInput(acc.email);
-    setPasswordInput(acc.pinOrPass);
+  const clearInviteQueryFromUrl = () => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('invite');
+    window.history.replaceState({}, '', url.pathname + url.search);
+    setInviteToken('');
+    setInviteInfo(null);
     setErrorMsg(null);
   };
 
-  const handleSelectDriverPreset = (trailer: TrailerUnit, idx: number) => {
-    setLoginCategory('DRIVER');
-    setSelectedRole('SOFER');
-    setSelectedDriverPlate(trailer.id);
-    setDriverPin(`${trailer.id.replace(/\D/g, '')}0${idx + 1}`.slice(0, 4));
-    setErrorMsg(null);
-  };
-
-  const handleSubmitLogin = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSubmitting) return;
+    const cleanId = identifier.trim();
+    if (!cleanId || !password) {
+      setErrorMsg('Introdu utilizatorul (sau emailul) și parola.');
+      return;
+    }
+
+    setIsSubmitting(true);
     setErrorMsg(null);
-
-    if (loginCategory === 'STAFF') {
-      if (!emailInput.trim() || !passwordInput.trim()) {
-        setErrorMsg('Te rugăm să introduci adresa de e-mail și parola contului.');
-        return;
-      }
-      const matched = staffAccounts.find(
-        (a) => a.email.toLowerCase() === emailInput.trim().toLowerCase()
+    try {
+      const { token, user } = await apiLoginWithPassword(cleanId, password, rememberMe);
+      setRememberedIdentifier(cleanId, rememberMe);
+      saveStoredAuthSession({ token, remember: rememberMe, user });
+      onAuthenticated(user, token, rememberMe);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error
+          ? err.message
+          : 'Email / utilizator sau parolă incorectă.'
       );
-      const roleToUse = matched ? matched.role : selectedRole;
-      const nameToUse = matched
-        ? `${matched.name} (${matched.roleBadge})`
-        : emailInput.split('@')[0];
-
-      onLoginSuccess(roleToUse, nameToUse, emailInput.trim());
-    } else {
-      if (!driverPin.trim() || driverPin.trim().length < 4) {
-        setErrorMsg('Introdu codul PIN Tahograf (4 cifre) al șoferului.');
-        return;
-      }
-      const tr =
-        trailers.find((t) => t.id === selectedDriverPlate) || trailers[0];
-      onLoginSuccess(
-        'SOFER',
-        `${tr.driver1.name} (${tr.tractorId} / ${tr.id})`,
-        `sofer.${tr.id.toLowerCase().replace(/\s+/g, '')}@bluetrans.ro`,
-        tr.id
-      );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const currentDriverObj =
-    trailers.find((t) => t.id === selectedDriverPlate) || trailers[0];
+  const handleAcceptInviteSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (isSubmitting || !inviteToken) return;
+    if (password.length < 6) {
+      setErrorMsg('Parola trebuie să conțină cel puțin 6 caractere.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMsg(null);
+    try {
+      const { token, user } = await apiAcceptInvite({
+        token: inviteToken,
+        password,
+        name: inviteName.trim(),
+        username: inviteUsername.trim(),
+        remember: rememberMe,
+      });
+      setRememberedIdentifier(user.email, rememberMe);
+      saveStoredAuthSession({ token, remember: rememberMe, user });
+      clearInviteQueryFromUrl();
+      onAuthenticated(user, token, rememberMe);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Nu s-a putut activa contul.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div
       data-theme={theme}
-      className="min-h-screen tahoe-wallpaper text-[#f5f5f7] flex flex-col justify-between p-4 sm:p-6 lg:p-10 transition-colors duration-200"
+      className="min-h-dvh tahoe-wallpaper text-[#f5f5f7] flex flex-col p-4 sm:p-6 transition-colors duration-200"
     >
-      {/* Top Bar on Login Screen: Brand + Theme Switcher */}
-      <div className="max-w-6xl w-full mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <DynamicBrandLogo height={80} />
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-lg tracking-tight text-white leading-tight">
-                SFERLE TMS
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-[#0A84FF]/20 text-[#0A84FF] border border-[#0A84FF]/35 leading-none">
-                PRO
-              </span>
-            </div>
-            <div className="text-xs font-medium text-white/60 mt-0.5">
-              Blue Trans Spedition · Oradea (BH)
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <LanguageToggleBar />
-
-          <button
-            type="button"
-            onClick={onToggleTheme}
-            className="px-4 py-2 rounded-full tahoe-btn-secondary text-xs font-bold flex items-center gap-2 cursor-pointer"
-          >
-            {theme === 'dark' ? (
-              <>
-                <Sun className="w-4 h-4 text-[#FF9F0A]" />
-                <span>Mod Luminos</span>
-              </>
-            ) : (
-              <>
-                <Moon className="w-4 h-4 text-[#0A84FF]" />
-                <span>Mod Întunecat</span>
-              </>
-            )}
-          </button>
-        </div>
+      {/* Top-right compact controls */}
+      <div className="w-full flex items-center justify-end gap-2">
+        <LanguageToggleBar />
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          aria-label={
+            theme === 'dark' ? 'Comută pe Modul Luminos' : 'Comută pe Modul Întunecat'
+          }
+          title={
+            theme === 'dark' ? 'Comută pe Modul Luminos' : 'Comută pe Modul Întunecat'
+          }
+          className="w-9 h-9 rounded-full tahoe-btn-secondary flex items-center justify-center transition cursor-pointer"
+        >
+          {theme === 'dark' ? (
+            <Sun className="w-4 h-4 text-[#FF9F0A]" />
+          ) : (
+            <Moon className="w-4 h-4 text-[#0A84FF]" />
+          )}
+        </button>
       </div>
 
-      {/* Center Login Grid: Left = Login Form | Right = Role & Driver Accounts */}
-      <div className="max-w-6xl w-full mx-auto my-8 grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        {/* LEFT 5 COLS: AUTHENTICATION FORM */}
-        <div className="lg:col-span-5 tahoe-glass-elevated rounded-[30px] p-6 sm:p-8 flex flex-col justify-between space-y-6 border border-white/20">
-          <div className="space-y-5">
-            {/* macOS Window Dots + Security Badge */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-[#FF5F56]" />
-                <span className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
-                <span className="w-3 h-3 rounded-full bg-[#27C93F]" />
+      {/* Classic Centered Card */}
+      <div className="flex-1 flex items-center justify-center py-6">
+        <div className="w-full max-w-[390px] tahoe-glass-elevated rounded-[28px] p-7 sm:p-8 border border-white/15">
+          {/* Brand Logo */}
+          <div className="flex flex-col items-center mb-6">
+            <DynamicBrandLogo height={68} />
+            <h1
+              id="auth-card-heading"
+              className="mt-4 text-xl font-extrabold text-white tracking-tight"
+            >
+              {inviteToken ? 'Activare cont' : 'Autentificare'}
+            </h1>
+          </div>
+
+          {errorMsg && (
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="mb-4 px-3.5 py-2.5 rounded-2xl bg-rose-500/15 border border-rose-500/35 text-rose-300 text-xs font-semibold flex items-center gap-2"
+            >
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {inviteToken ? (
+            inviteLoading ? (
+              <div className="py-8 flex items-center justify-center gap-2 text-xs font-semibold text-white/70">
+                <Loader2 className="w-4 h-4 animate-spin text-[#0A84FF]" />
+                <span>Se verifică invitația...</span>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#30D158]/20 text-[#30D158] border border-[#30D158]/30 flex items-center gap-1.5">
-                <Radio className="w-3 h-3 animate-pulse" />
-                SSO & Tahograf Activ
-              </span>
-            </div>
-
-            <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[#64D2FF]">
-                PORTAL SECURIZAT PE ROLURI (RBAC)
-              </span>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mt-1">
-                Autentificare în Sistem
-              </h1>
-              <p className="text-xs sm:text-sm text-white/65 mt-1">
-                Selectează tipul de portal: <strong>Dispecerat / Admin / Financiar</strong> sau{' '}
-                <strong>Cabina Șoferului (rută & fișă tehnică proprie)</strong>.
-              </p>
-            </div>
-
-            {/* Mode Switcher: Staff vs Driver Cab */}
-            <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-full tahoe-card-inner">
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginCategory('STAFF');
-                  setSelectedRole('ADMIN');
-                }}
-                className={`py-2.5 px-3 rounded-full text-xs font-extrabold flex items-center justify-center gap-2 transition cursor-pointer ${
-                  loginCategory === 'STAFF'
-                    ? 'tahoe-btn-primary text-white shadow'
-                    : 'text-white/70 hover:text-white'
-                }`}
+            ) : inviteInfo ? (
+              <form
+                method="POST"
+                action="/api/auth/accept-invite"
+                aria-labelledby="auth-card-heading"
+                onSubmit={handleAcceptInviteSubmit}
+                className="space-y-4"
               >
-                <ShieldCheck className="w-4 h-4" />
-                <span>Dispecerat & Admin</span>
-              </button>
+                <div className="px-4 py-2.5 rounded-full tahoe-card-inner flex items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-white/85 truncate">
+                    {inviteInfo.email}
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/35 text-[11px] font-bold shrink-0">
+                    {ROLE_LABELS[inviteInfo.role] || inviteInfo.role}
+                  </span>
+                </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginCategory('DRIVER');
-                  setSelectedRole('SOFER');
-                }}
-                className={`py-2.5 px-3 rounded-full text-xs font-extrabold flex items-center justify-center gap-2 transition cursor-pointer ${
-                  loginCategory === 'DRIVER'
-                    ? 'tahoe-btn-primary text-white shadow'
-                    : 'text-white/70 hover:text-white'
-                }`}
-              >
-                <Navigation className="w-4 h-4" />
-                <span>Portal Șofer (Cabină)</span>
-              </button>
-            </div>
+                <div>
+                  <label
+                    htmlFor="invite-fullname"
+                    className="block text-xs font-bold text-white/80 mb-1.5"
+                  >
+                    Nume
+                  </label>
+                  <input
+                    id="invite-fullname"
+                    name="name"
+                    type="text"
+                    autoComplete="name"
+                    enterKeyHint="next"
+                    required
+                    value={inviteName}
+                    onChange={(e) => {
+                      setInviteName(e.target.value);
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    className="w-full min-h-[46px] tahoe-card-inner rounded-full px-4 py-2.5 text-base sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
+                  />
+                </div>
 
-            {errorMsg && (
-              <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold">
-                {errorMsg}
-              </div>
-            )}
+                <div>
+                  <label
+                    htmlFor="invite-username"
+                    className="block text-xs font-bold text-white/80 mb-1.5"
+                  >
+                    Utilizator
+                  </label>
+                  <input
+                    id="invite-username"
+                    name="username"
+                    type="text"
+                    autoComplete="username"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    enterKeyHint="next"
+                    required
+                    value={inviteUsername}
+                    onChange={(e) => {
+                      setInviteUsername(e.target.value);
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    className="w-full min-h-[46px] tahoe-card-inner rounded-full px-4 py-2.5 text-base sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
+                  />
+                </div>
 
-            {/* Login Form */}
-            <form onSubmit={handleSubmitLogin} className="space-y-4">
-              {loginCategory === 'STAFF' ? (
-                <>
-                  <div>
-                    <label className="block text-xs font-bold text-white/75 mb-1.5">
-                      Grad de Acces / Rol Operațional
-                    </label>
-                    <select
-                      value={selectedRole}
+                <div>
+                  <label
+                    htmlFor="invite-password"
+                    className="block text-xs font-bold text-white/80 mb-1.5"
+                  >
+                    Parolă (minim 6 caractere)
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-white/50 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
+                    <input
+                      id="invite-password"
+                      name="password"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      enterKeyHint="done"
+                      minLength={6}
+                      required
+                      value={password}
                       onChange={(e) => {
-                        const r = e.target.value as UserRoleType;
-                        setSelectedRole(r);
-                        const preset = staffAccounts.find((a) => a.role === r);
-                        if (preset) {
-                          setEmailInput(preset.email);
-                          setPasswordInput(preset.pinOrPass);
-                        }
+                        setPassword(e.target.value);
+                        if (errorMsg) setErrorMsg(null);
                       }}
-                      className="w-full tahoe-card-inner rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-bold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
+                      placeholder="••••••••"
+                      className="w-full min-h-[46px] tahoe-card-inner rounded-full pl-10 pr-11 py-2.5 text-base sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-pressed={showPassword}
+                      aria-label={showPassword ? 'Ascunde parola' : 'Arată parola'}
+                      aria-describedby="pw-toggle-sr-note"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition cursor-pointer"
                     >
-                      <option value="ADMIN" className="bg-slate-900 text-white">
-                        Administrator General (Acces Complet TMS)
-                      </option>
-                      <option value="DISPECER" className="bg-slate-900 text-white">
-                        Admin Cursă / Dispecer Coordonator (Planning, Grupaj, Swap & Șoferi)
-                      </option>
-                      <option value="FINANCIAR" className="bg-slate-900 text-white">
-                        Financiar & Facturare (Oferte, CMR, Profitabilitate)
-                      </option>
-                    </select>
+                      {showPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
                   </div>
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-white/75 mb-1.5">
-                      E-mail Instituțional Blue Trans
-                    </label>
-                    <div className="relative">
-                      <Mail className="w-4 h-4 text-white/45 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="email"
-                        required
-                        value={emailInput}
-                        onChange={(e) => setEmailInput(e.target.value)}
-                        placeholder="nume@bluetrans.ro"
-                        className="w-full tahoe-card-inner rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
-                      />
-                    </div>
-                  </div>
+                <div className="flex items-center gap-2.5 pt-0.5">
+                  <input
+                    id="invite-remember"
+                    name="remember"
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 rounded accent-[#0A84FF] cursor-pointer"
+                  />
+                  <label
+                    htmlFor="invite-remember"
+                    className="text-xs font-semibold text-white/80 select-none cursor-pointer py-1"
+                  >
+                    Ține-mă minte
+                  </label>
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-white/75 mb-1.5">
-                      Parolă Cont
-                    </label>
-                    <div className="relative">
-                      <KeyRound className="w-4 h-4 text-white/45 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="password"
-                        required
-                        value={passwordInput}
-                        onChange={(e) => setPasswordInput(e.target.value)}
-                        className="w-full tahoe-card-inner rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
-                      />
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label className="block text-xs font-bold text-white/75 mb-1.5">
-                      Selectează Camionul / Semiremorca Atribuită Șoferului
-                    </label>
-                    <select
-                      value={selectedDriverPlate}
-                      onChange={(e) => setSelectedDriverPlate(e.target.value)}
-                      className="w-full tahoe-card-inner rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-bold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
-                    >
-                      {trailers.map((t) => (
-                        <option key={t.id} value={t.id} className="bg-slate-900 text-white">
-                          {t.id} · Șofer: {t.driver1.name} ({t.routeSummary[0]} →{' '}
-                          {t.routeSummary[t.routeSummary.length - 1]})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full min-h-[48px] px-5 rounded-full tahoe-btn-primary text-sm font-extrabold text-white flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
+                >
+                  {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  <span>Activează contul</span>
+                </button>
+              </form>
+            ) : (
+              <div className="space-y-3 text-center">
+                <button
+                  type="button"
+                  onClick={clearInviteQueryFromUrl}
+                  className="w-full min-h-[46px] px-5 rounded-full tahoe-btn-secondary text-xs font-bold text-white cursor-pointer"
+                >
+                  Mergi la Autentificare
+                </button>
+              </div>
+            )
+          ) : (
+            <form
+              method="POST"
+              action="/api/auth/login"
+              aria-labelledby="auth-card-heading"
+              onSubmit={handleLoginSubmit}
+              className="space-y-4"
+            >
+              <div>
+                <label
+                  htmlFor="login-identifier"
+                  className="block text-xs font-bold text-white/80 mb-1.5"
+                >
+                  Email sau utilizator
+                </label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-white/50 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
+                  <input
+                    id="login-identifier"
+                    name="username"
+                    type="text"
+                    autoComplete="username"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    enterKeyHint="next"
+                    required
+                    value={identifier}
+                    onChange={(e) => {
+                      setIdentifier(e.target.value);
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    placeholder="nume@bluetrans.ro"
+                    className="w-full min-h-[48px] tahoe-card-inner rounded-full pl-10 pr-4 py-2.5 text-base sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
+                  />
+                </div>
+              </div>
 
-                  <div className="p-3.5 rounded-2xl tahoe-card-inner space-y-1 text-xs border border-[#0A84FF]/30">
-                    <div className="font-bold text-[#64D2FF]">
-                      Ansamblu: {currentDriverObj.tractorId} + {currentDriverObj.id}
-                    </div>
-                    <div className="text-white/80">
-                      Șofer titular: <strong>{currentDriverObj.driver1.name}</strong>
-                      {currentDriverObj.driver2
-                        ? ` · Co-șofer: ${currentDriverObj.driver2.name}`
-                        : ''}
-                    </div>
-                    <div className="text-[11px] text-[#30D158] font-semibold">
-                      Rută atribuită: {currentDriverObj.routeSummary.join(' → ')}
-                    </div>
-                  </div>
+              <div>
+                <label
+                  htmlFor="login-password"
+                  className="block text-xs font-bold text-white/80 mb-1.5"
+                >
+                  Parolă
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-white/50 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
+                  <input
+                    id="login-password"
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    enterKeyHint="done"
+                    required
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    placeholder="••••••••"
+                    className="w-full min-h-[48px] tahoe-card-inner rounded-full pl-10 pr-11 py-2.5 text-base sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-pressed={showPassword}
+                    aria-label={showPassword ? 'Ascunde parola' : 'Arată parola'}
+                    aria-describedby="pw-toggle-sr-note"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition cursor-pointer"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-white/75 mb-1.5">
-                      Cod PIN Card Tahograf / Cabină (4 cifre)
-                    </label>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-white/45 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="password"
-                        required
-                        maxLength={8}
-                        value={driverPin}
-                        onChange={(e) => setDriverPin(e.target.value)}
-                        placeholder="6701"
-                        className="w-full tahoe-card-inner rounded-xl pl-10 pr-4 py-2.5 text-sm font-extrabold tracking-widest text-white border border-white/15 focus:outline-none focus:border-[#0A84FF] tabular-nums"
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
+              <span id="pw-toggle-sr-note" className="sr-only">
+                Afișează parola în clar pe ecran.
+              </span>
+
+              <div className="flex items-center gap-2.5 pt-0.5">
+                <input
+                  id="login-remember"
+                  name="remember"
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="w-4 h-4 rounded accent-[#0A84FF] cursor-pointer"
+                />
+                <label
+                  htmlFor="login-remember"
+                  className="text-xs font-semibold text-white/80 select-none cursor-pointer py-1"
+                >
+                  Ține-mă minte
+                </label>
+              </div>
 
               <button
                 type="submit"
-                className="w-full py-3.5 px-5 rounded-full tahoe-btn-primary text-sm font-extrabold text-white flex items-center justify-center gap-2 shadow-xl cursor-pointer mt-2"
+                disabled={isSubmitting}
+                className="w-full min-h-[48px] px-5 rounded-full tahoe-btn-primary text-sm font-extrabold text-white flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60 mt-1"
               >
-                <span>
-                  {loginCategory === 'STAFF'
-                    ? `Autentificare ca ${
-                        selectedRole === 'ADMIN'
-                          ? 'Administrator General'
-                          : selectedRole === 'DISPECER'
-                          ? 'Admin Cursă / Dispecer'
-                          : 'Financiar & Facturare'
-                      }`
-                    : `Intră în Cabina Șoferului (${selectedDriverPlate})`}
-                </span>
-                <ArrowRight className="w-4 h-4" />
+                {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span>Intră în cont</span>
               </button>
             </form>
-          </div>
-
-          <div className="pt-4 border-t border-white/10 flex items-center justify-between text-[11px] text-white/50">
-            <span>Criptare TLS 1.3 · Cargo Track SSO</span>
-            <span>Blue Trans Spedition SRL</span>
-          </div>
+          )}
         </div>
-
-        {/* RIGHT 7 COLS: QUICK ROLE & DRIVER ACCOUNTS FOR INSTANT LOGIN */}
-        <div className="lg:col-span-7 tahoe-glass rounded-[30px] p-6 sm:p-8 flex flex-col justify-between space-y-6">
-          <div className="space-y-4">
-            <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[#30D158]">
-                CONTURI ACTIVE ÎN PLATFORMĂ · AUTENTIFICARE 1-CLICK SAU ÎN FORMULAR
-              </span>
-              <h2 className="text-lg sm:text-xl font-extrabold text-white mt-0.5">
-                1. Grade Administrative, Dispecerat (Admini de Cursă) & Financiar
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {staffAccounts.map((acc) => {
-                const isSelected =
-                  loginCategory === 'STAFF' && emailInput === acc.email;
-                return (
-                  <div
-                    key={acc.id}
-                    onClick={() => handleSelectStaffPreset(acc)}
-                    className={`p-4 rounded-2xl border transition cursor-pointer flex flex-col justify-between gap-2.5 ${
-                      isSelected
-                        ? 'bg-[#0A84FF]/20 border-[#0A84FF] shadow-md'
-                        : 'tahoe-card-inner border-white/10 hover:border-white/25'
-                    }`}
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="px-2 py-0.5 rounded-md bg-[#0A84FF]/20 text-[#64D2FF] text-[10px] font-extrabold">
-                          {acc.roleBadge}
-                        </span>
-                        {isSelected && (
-                          <UserCheck className="w-4 h-4 text-[#30D158] shrink-0" />
-                        )}
-                      </div>
-                      <div className="text-sm font-extrabold text-white pt-0.5">
-                        {acc.name}
-                      </div>
-                      <div className="text-[11px] text-[#64D2FF] font-medium">
-                        {acc.department}
-                      </div>
-                      <p className="text-[11px] text-white/65 leading-snug">
-                        {acc.permissionsSummary}
-                      </p>
-                    </div>
-
-                    <div className="pt-2 border-t border-white/10 flex items-center justify-between">
-                      <span className="text-[10px] text-white/50 truncate">
-                        {acc.email}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onLoginSuccess(
-                            acc.role,
-                            `${acc.name} (${acc.roleBadge})`,
-                            acc.email
-                          );
-                        }}
-                        className="px-3.5 py-1 rounded-full tahoe-btn-primary text-[11px] font-bold text-white cursor-pointer shrink-0"
-                      >
-                        Intră direct →
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Driver Cab Accounts Section */}
-          <div className="space-y-3 pt-2 border-t border-white/10">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#64D2FF]">
-                  MODULUL PENTRU ȘOFERI (VIZIBILITATE EXCLUSIVĂ PE RUTA ȘI CAMIONUL ATRIBUIT)
-                </span>
-                <h3 className="text-base sm:text-lg font-extrabold text-white">
-                  2. Conturi Șoferi Flotă (7 Ansambluri Active + Adminul Cursei)
-                </h3>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
-              {trailers.map((t, idx) => {
-                const isSelected =
-                  loginCategory === 'DRIVER' && selectedDriverPlate === t.id;
-                const courseAdmin =
-                  t.id === 'BH 75 STS' ||
-                  t.id === 'BH 91 STS' ||
-                  t.id.includes('EXP')
-                    ? 'Radu Cristea'
-                    : 'Elena Munteanu';
-
-                return (
-                  <div
-                    key={t.id}
-                    onClick={() => handleSelectDriverPreset(t, idx)}
-                    className={`p-3 rounded-2xl border transition cursor-pointer flex items-center justify-between gap-2 ${
-                      isSelected
-                        ? 'bg-[#30D158]/20 border-[#30D158]'
-                        : 'tahoe-card-inner border-white/10 hover:border-white/25'
-                    }`}
-                  >
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="text-xs font-extrabold text-white truncate">
-                        {t.driver1.name} ·{' '}
-                        <span className="text-[#64D2FF]">{t.id}</span>
-                      </div>
-                      <div className="text-[10px] text-white/70 truncate">
-                        Ruta: <strong>{t.routeSummary.join(' → ')}</strong>
-                      </div>
-                      <div className="text-[10px] text-[#30D158] font-semibold">
-                        Admin Cursă: {courseAdmin} · {t.zone1Temp}°C / +{t.zone2Temp}°C
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onLoginSuccess(
-                          'SOFER',
-                          `${t.driver1.name} (${t.tractorId} / ${t.id})`,
-                          `sofer.${t.id.toLowerCase().replace(/\s+/g, '')}@bluetrans.ro`,
-                          t.id
-                        );
-                      }}
-                      className="px-3.5 py-1.5 rounded-full bg-[#30D158] hover:bg-[#28b84c] text-slate-950 font-extrabold text-[11px] shrink-0 cursor-pointer"
-                    >
-                      Cabină →
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom Footer */}
-      <div className="max-w-6xl w-full mx-auto text-center text-xs text-white/45">
-        SFERLE TMS PRO · Sistem Integrat de Planificare, Grupaje Bi-Temp, Smart Trailer Swap și Portal Șoferi
       </div>
     </div>
   );
 };
-

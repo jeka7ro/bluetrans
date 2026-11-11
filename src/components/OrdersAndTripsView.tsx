@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import {
   Plus,
   ArrowRight,
@@ -81,6 +81,7 @@ interface OrdersAndTripsViewProps {
     targetHourSlot?: string,
     targetWeekOffset?: number
   ) => void;
+  focusAllocationNonce?: number;
 }
 
 export const INITIAL_ACTIVE_LOADS: ActiveLoadItem[] = [
@@ -144,8 +145,60 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
   activeLoads,
   onCreateOrder,
   onAssignOrderToTrailer,
+  focusAllocationNonce,
 }) => {
   const formUid = useId();
+  const allocationPanelRef = useRef<HTMLDivElement>(null);
+  const allocationHeadingRef = useRef<HTMLHeadingElement>(null);
+  const scrollOpRef = useRef(0);
+  const [highlightAllocation, setHighlightAllocation] = useState(false);
+
+  useEffect(() => {
+    if (!focusAllocationNonce) return;
+    const panel = allocationPanelRef.current;
+    if (!panel) return;
+    const opId = ++scrollOpRef.current;
+    setHighlightAllocation(false);
+
+    const runScroll = async () => {
+      const maybePromise: unknown = panel.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+      if (maybePromise instanceof Promise) {
+        await maybePromise;
+      } else {
+        await new Promise<void>((resolve) => {
+          let timerId: number | undefined;
+          const finish = () => {
+            window.clearTimeout(timerId);
+            window.removeEventListener('scrollend', finish);
+            window.removeEventListener('scroll', onScroll);
+            resolve();
+          };
+          const onScroll = () => {
+            window.clearTimeout(timerId);
+            timerId = window.setTimeout(finish, 110);
+          };
+          window.addEventListener('scrollend', finish, { once: true });
+          window.addEventListener('scroll', onScroll, { passive: true });
+          timerId = window.setTimeout(finish, 120);
+        });
+      }
+      if (opId !== scrollOpRef.current) return;
+      allocationHeadingRef.current?.focus({ preventScroll: true });
+      setHighlightAllocation(true);
+      window.setTimeout(() => {
+        if (opId === scrollOpRef.current) {
+          setHighlightAllocation(false);
+        }
+      }, 1800);
+    };
+
+    requestAnimationFrame(() => {
+      void runScroll();
+    });
+  }, [focusAllocationNonce]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showNewOrderModal, setShowNewOrderModal] = useState<boolean>(false);
@@ -481,7 +534,7 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
         <button
           type="button"
           onClick={() => setShowNewOrderModal(true)}
-          className="px-4 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/25 transition shrink-0 cursor-pointer"
+          className="px-4 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center sm:justify-start gap-2 shadow-lg shadow-indigo-600/25 transition shrink-0 cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           Cursă / Comandă nouă
@@ -540,7 +593,128 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile Order Cards (`< md`) — zero clipping on phones while Desktop `<table>` stays untouched */}
+        <div className="md:hidden space-y-3">
+          {filteredLoads.map((load) => {
+            const trObj = trailers.find((t) => t.id === load.trailerId) || trailers[0];
+            const trPlate = trObj ? trObj.tractorId.split(' (')[0] : '';
+            const isTwo = Boolean(trPlate && trPlate !== load.trailerId);
+            const [fromPart, toPart] = load.route.split(' → ');
+            return (
+              <div
+                key={load.id}
+                className="tahoe-card-inner rounded-2xl p-3.5 border border-white/15 space-y-2.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="tabular-nums font-extrabold text-xs text-indigo-300">
+                      {load.id}
+                    </span>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${
+                        load.status === 'În tranzit'
+                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                          : load.status === 'Planificată'
+                            ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                            : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                      }`}
+                    >
+                      {load.status}
+                    </span>
+                  </div>
+                  <span className="tabular-nums font-extrabold text-sm text-emerald-400 shrink-0">
+                    {load.revenueEur} €
+                  </span>
+                </div>
+
+                <div>
+                  <div className="font-bold text-sm text-white leading-snug">
+                    {load.client}
+                  </div>
+                  <div className="text-xs text-slate-300 mt-0.5 font-medium">
+                    {load.route}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold tabular-nums">
+                    {load.ldm.toFixed(1)} LDM · {load.weightTons}t
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-bold tabular-nums">
+                    {load.temp}
+                  </span>
+                  <span className="text-white/60 text-[10.5px]">{load.cargoDesc}</span>
+                </div>
+
+                <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1">
+                    {isTwo && (
+                      <>
+                        {renderEuroRoPlate(trPlate)}
+                        <span className="font-black text-white/75 text-[10px]">+</span>
+                      </>
+                    )}
+                    {renderEuroRoPlate(load.trailerId)}
+                  </span>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPrintableDoc({
+                          docType: 'CMR',
+                          referenceNo: load.id,
+                          clientName: load.client,
+                          fromCity: fromPart || 'Oradea',
+                          toCity: toPart || 'Rotterdam',
+                          cargoDesc: load.cargoDesc,
+                          ldm: load.ldm,
+                          weightTons: load.weightTons,
+                          tempRegime: load.temp,
+                          tractorPlate: trPlate,
+                          trailerPlate: trObj.id,
+                          driverName: trObj.driver1.name,
+                          revenueEur: load.revenueEur,
+                        })
+                      }
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 border border-[#0A84FF]/35 text-[#64D2FF] font-bold text-[11px] cursor-pointer"
+                    >
+                      <Printer className="w-3 h-3" aria-hidden="true" />
+                      <span>CMR</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPrintableDoc({
+                          docType: 'INVOICE',
+                          referenceNo: load.id.replace('LD-', '44'),
+                          clientName: load.client,
+                          fromCity: fromPart || 'Oradea',
+                          toCity: toPart || 'Rotterdam',
+                          cargoDesc: load.cargoDesc,
+                          ldm: load.ldm,
+                          weightTons: load.weightTons,
+                          tempRegime: load.temp,
+                          tractorPlate: trPlate,
+                          trailerPlate: trObj.id,
+                          driverName: trObj.driver1.name,
+                          revenueEur: load.revenueEur,
+                        })
+                      }
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#30D158]/15 hover:bg-[#30D158]/25 border border-[#30D158]/35 text-[#30D158] font-bold text-[11px] cursor-pointer"
+                    >
+                      <Receipt className="w-3 h-3" aria-hidden="true" />
+                      <span>Factură</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-white/5 text-white/60 uppercase border-b border-white/10">
@@ -682,13 +856,23 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
       </div>
 
       {/* Bottom Panel from Image 4: "Cursă nouă" (1 Detalii -> 2 Alocare -> 3 Confirmare) */}
-      <div className="tahoe-glass rounded-[28px] p-5 space-y-5 shadow-xl">
+      <div
+        id="orders-allocation-wizard"
+        ref={allocationPanelRef}
+        className={`tahoe-glass rounded-[28px] p-5 space-y-5 shadow-xl scroll-mt-24 transition-shadow duration-300 ${
+          highlightAllocation ? 'ring-2 ring-[#0A84FF] shadow-[#0A84FF]/25' : ''
+        }`}
+      >
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10 pb-4">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">
               WIZARD PLANIFICARE CURSĂ NOUĂ / GRUPAJ
             </span>
-            <h2 className="text-lg font-bold text-white">
+            <h2
+              ref={allocationHeadingRef}
+              tabIndex={-1}
+              className="text-lg font-bold text-white focus:outline-none"
+            >
               ← Cursă nouă (Alocare Comandă pe Remorcă, Cap Tractor și Șofer)
             </h2>
           </div>
@@ -911,7 +1095,7 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
                     id={`${formUid}-title`}
                     className="text-lg font-bold text-white truncate mt-0.5"
                   >
-                    Adaugă Cursă sau Comandă în SFERLE TMS PRO
+                    Adaugă Cursă sau Comandă
                   </h3>
                 </div>
                 <button

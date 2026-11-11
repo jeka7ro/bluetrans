@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import L from 'leaflet';
 import {
   CheckCircle2,
   CircleDot,
+  Clock,
   Maximize2,
   Minimize2,
   Navigation,
@@ -16,340 +17,32 @@ import {
 } from 'lucide-react';
 import { TrailerUnit, formatCountryBadge } from '../data/mockData';
 import { REAL_TRUCK_HIGHWAY_GEOMETRIES } from '../data/highwayGeometries';
+import {
+  AppleWeatherType,
+  CORRIDOR_ROUTES,
+  MapTripItem,
+  RouteDefinition,
+} from '../utils/planningRouteSync';
+import {
+  attachLiveRainViewerRadar,
+  startAccuWeatherCanvasAnimation,
+} from '../utils/accuWeatherCanvas';
+
+export { CORRIDOR_ROUTES };
+export type { RouteDefinition };
 
 interface EuropeLiveMapProps {
   trailers: TrailerUnit[];
+  activeTrips?: MapTripItem[];
+  pastTrips?: MapTripItem[];
+  singleTripItem?: MapTripItem;
+  tripScopeFilter?: 'active' | 'past';
+  onTripScopeFilterChange?: (scope: 'active' | 'past') => void;
   onSelectTrailer?: (trailerId: string) => void;
   onNavigateSwap?: () => void;
   heightClass?: string;
   singleTripMode?: boolean;
 }
-
-type AppleWeatherType = 'sun' | 'partly-cloudy' | 'rain' | 'snow' | 'wind';
-
-interface RouteDefinition {
-  trailerId: string;
-  tripCode: string;
-  highwayCorridor: string;
-  color: string;
-  glowColor: string;
-  totalTechKm: number;
-  drivenKm: number;
-  estDriveHours: string;
-  transitWindow: string;
-  // Dense real European HGV motorway waypoints (M35/M3/M1/A4/A1/A8/A3/A61/A67/A15 & Storebælt/Øresund Bridges)
-  coordinates: [number, number][];
-  checkpoints: {
-    city: string;
-    country: string;
-    coords: [number, number];
-    completed: boolean;
-    current?: boolean;
-    eta: string;
-    techKm: string;
-    weatherType: AppleWeatherType;
-    tempC: number;
-    weatherDesc: string;
-    freeLdmAfter: number;
-  }[];
-}
-
-const CORRIDOR_ROUTES: Record<string, RouteDefinition> = {
-  'BH 67 STS': {
-    trailerId: 'BH 67 STS',
-    tripCode: 'TR-4821',
-    highwayCorridor: 'M35 → M3 → M0 → M1 → A4 → A1 → A8 → A3 → A67 → A15',
-    color: '#0284c7',
-    glowColor: 'rgba(2, 132, 199, 0.35)',
-    totalTechKm: 1580,
-    drivenKm: 540,
-    estDriveHours: '19h 30m',
-    transitWindow: '9 Noi 06:00 → 10 Noi 15:00',
-    coordinates: [
-      [47.0722, 21.9217], // Oradea (RO)
-      [47.1310, 21.7950], // Borș II / A3
-      [47.5316, 21.6273], // Debrecen (M35)
-      [47.7850, 21.1200], // Polgár / M3 Junction
-      [47.7600, 20.3500], // Füzesabony (M3)
-      [47.6500, 19.6000], // Hatvan (M3)
-      [47.4100, 19.1500], // Budapesta Sud Ring (M0)
-      [47.4600, 18.8800], // Biatorbágy (M1)
-      [47.5692, 18.4048], // Tatabánya (M1)
-      [47.6875, 17.6504], // Győr (M1)
-      [47.9144, 17.1528], // Hegyeshalom / Nickelsdorf (M1/A4)
-      [48.0200, 16.7800], // Bruck an der Leitha (A4)
-      [48.1400, 16.4200], // Viena Schwechat / S1
-      [48.2082, 16.3738], // Viena (AT)
-      [48.1950, 15.6300], // St. Pölten (A1)
-      [48.2100, 14.8700], // Amstetten (A1)
-      [48.2600, 14.2900], // Linz / Ansfelden (A1)
-      [48.1700, 13.9800], // Wels (A8)
-      [48.4064, 13.4314], // Suben / Passau (A8/A3)
-      [48.8300, 12.9600], // Deggendorf (A3)
-      [48.8800, 12.5700], // Straubing (A3)
-      [48.9900, 12.1000], // Regensburg (A3)
-      [49.2789, 11.4611], // Neumarkt in der Oberpfalz (A3)
-      [49.4521, 11.0767], // Nürnberg (A3)
-      [49.5800, 10.8600], // Erlangen (A3)
-      [49.7600, 9.9500],  // Würzburg (A3)
-      [49.9800, 9.1500],  // Aschaffenburg (A3)
-      [50.0500, 8.5800],  // Frankfurt Airport / Kreuz (A3)
-      [50.3800, 8.0600],  // Limburg an der Lahn (A3)
-      [50.4500, 7.8200],  // Montabaur (A3)
-      [50.7500, 7.2500],  // Siegburg / Bonn (A3)
-      [50.9375, 6.9603],  // Köln Ring (A3/A4)
-      [51.1800, 6.4400],  // Mönchengladbach (A61)
-      [51.3704, 6.1724],  // Venlo Border (A61/A67)
-      [51.4100, 5.4800],  // Eindhoven Ring (A67/A2)
-      [51.5500, 5.0800],  // Tilburg (A58)
-      [51.5800, 4.7700],  // Breda (A16)
-      [51.8000, 4.6600],  // Dordrecht (A16)
-      [51.9244, 4.4777],  // Rotterdam Port (A15)
-    ],
-    checkpoints: [
-      { city: 'Oradea', country: 'RO', coords: [47.0722, 21.9217], completed: true, eta: 'Plecat 06:00 (M35/M3)', techKm: '0 km (Start)', weatherType: 'sun', tempC: 11, weatherDesc: 'Senin · Uscat', freeLdmAfter: 1.2 },
-      { city: 'Budapesta', country: 'HU', coords: [47.4100, 19.1500], completed: true, eta: 'Trecut 10:15 (M0/M1)', techKm: '295 km (+295 km)', weatherType: 'partly-cloudy', tempC: 10, weatherDesc: 'Parțial noros', freeLdmAfter: 1.2 },
-      { city: 'Viena', country: 'AT', coords: [48.2082, 16.3738], completed: false, current: true, eta: 'Azi 14:30 (-4.2 LDM)', techKm: '540 km (+245 km)', weatherType: 'partly-cloudy', tempC: 9, weatherDesc: 'Parțial noros', freeLdmAfter: 5.4 },
-      { city: 'Köln', country: 'DE', coords: [50.9375, 6.9603], completed: false, eta: 'Mâine 08:30 (-3.0 LDM)', techKm: '1.310 km (+770 km)', weatherType: 'rain', tempC: 7, weatherDesc: 'Ploaie ușoară', freeLdmAfter: 8.4 },
-      { city: 'Rotterdam', country: 'NL', coords: [51.9244, 4.4777], completed: false, eta: 'Mâine 15:00 (Final)', techKm: '1.580 km (+270 km)', weatherType: 'wind', tempC: 8, weatherDesc: 'Vânt de coastă', freeLdmAfter: 13.6 },
-    ],
-  },
-  'BH 69 STS': {
-    trailerId: 'BH 69 STS',
-    tripCode: 'TR-4819',
-    highwayCorridor: 'M4 → M0 → M1 → A4 → A1 → A8 → A99 → A8 → A5 → A3 → A12 → A27',
-    color: '#ea580c',
-    glowColor: 'rgba(234, 88, 12, 0.35)',
-    totalTechKm: 1420,
-    drivenKm: 680,
-    estDriveHours: '17h 45m',
-    transitWindow: '9 Noi 04:30 → 10 Noi 16:00',
-    coordinates: [
-      [47.1621, 20.1825], // Szolnok (M4)
-      [47.3200, 19.5500], // Monor (M4)
-      [47.4100, 19.1500], // Budapesta (M0)
-      [47.5692, 18.4048], // Tatabánya (M1)
-      [47.6875, 17.6504], // Győr (M1)
-      [47.9144, 17.1528], // Hegyeshalom (M1/A4)
-      [48.2082, 16.3738], // Viena (A1)
-      [48.2600, 14.2900], // Linz (A1)
-      [47.8095, 13.0550], // Salzburg (A1/A8)
-      [47.8500, 12.1200], // Rosenheim (A8)
-      [48.1351, 11.5820], // München (A99/A8)
-      [48.3705, 10.8978], // Augsburg (A8)
-      [48.4011, 9.9876],  // Ulm (A8)
-      [48.7758, 9.1829],  // Stuttgart (A8/A81)
-      [49.0069, 8.4037],  // Karlsruhe (A8/A5)
-      [49.4875, 8.4660],  // Mannheim / Walldorf (A5/A6)
-      [50.1109, 8.6821],  // Frankfurt am Main (A5/A3)
-      [50.4500, 7.8200],  // Montabaur (A3)
-      [50.9375, 6.9603],  // Köln (A3)
-      [51.4500, 6.7500],  // Duisburg / Oberhausen (A3)
-      [51.8300, 6.1500],  // Emmerich / Arnhem Border (A3/A12)
-      [52.0907, 5.1214],  // Utrecht (A12/A27)
-      [52.3508, 5.2647],  // Almere (A27/A6)
-    ],
-    checkpoints: [
-      { city: 'Szolnok', country: 'HU', coords: [47.1621, 20.1825], completed: true, eta: 'Plecat 04:30 (M4/M1)', techKm: '0 km (Start)', weatherType: 'sun', tempC: 10, weatherDesc: 'Senin · Uscat', freeLdmAfter: 0.0 },
-      { city: 'München', country: 'DE', coords: [48.1351, 11.5820], completed: false, current: true, eta: 'Azi 16:00 (-2.2 LDM)', techKm: '680 km (+680 km)', weatherType: 'partly-cloudy', tempC: 6, weatherDesc: 'Parțial noros', freeLdmAfter: 2.2 },
-      { city: 'Frankfurt', country: 'DE', coords: [50.1109, 8.6821], completed: false, eta: 'Mâine 07:00 (-4.4 LDM)', techKm: '1.070 km (+390 km)', weatherType: 'rain', tempC: 7, weatherDesc: 'Averse A3/A5', freeLdmAfter: 6.6 },
-      { city: 'Almere', country: 'NL', coords: [52.3508, 5.2647], completed: false, eta: 'Mâine 16:00 (Final)', techKm: '1.420 km (+350 km)', weatherType: 'wind', tempC: 8, weatherDesc: 'Vânt moderat', freeLdmAfter: 13.6 },
-    ],
-  },
-  'BH 75 STS': {
-    trailerId: 'BH 75 STS',
-    tripCode: 'TR-4825',
-    highwayCorridor: 'A12 → A1 → A7 → E45 → E20 (Pod Storebælt & Pod Øresund) → E6 → E4',
-    color: '#16a34a',
-    glowColor: 'rgba(22, 163, 74, 0.35)',
-    totalTechKm: 1460,
-    drivenKm: 490,
-    estDriveHours: '18h 15m',
-    transitWindow: '9 Noi 05:00 → 10 Noi 16:30',
-    coordinates: [
-      [51.9244, 4.4777],  // Rotterdam
-      [52.0300, 4.7000],  // Gouda (A12)
-      [52.0907, 5.1214],  // Utrecht (A12/A28)
-      [52.1500, 5.3800],  // Amersfoort (A1)
-      [52.2100, 5.9600],  // Apeldoorn (A1)
-      [52.2600, 6.7900],  // Hengelo (A1)
-      [52.3100, 7.0400],  // Bad Bentheim Border (A1/A30)
-      [52.2799, 8.0472],  // Osnabrück (A30/A1)
-      [53.0793, 8.8017],  // Bremen (A1)
-      [53.5511, 9.9937],  // Hamburg Elbtunnel (A1/A7)
-      [54.0700, 9.9800],  // Neumünster (A7)
-      [54.3000, 9.6600],  // Rendsburg (A7)
-      [54.7800, 9.4300],  // Flensburg / Padborg Border (A7/E45)
-      [55.0400, 9.3800],  // Aabenraa (E45)
-      [55.4904, 9.4722],  // Kolding (E45/E20)
-      [55.5500, 9.7500],  // Fredericia / Little Belt Bridge (E20)
-      [55.3959, 10.3883], // Odense (E20)
-      [55.3100, 10.7900], // Nyborg — Podul Storebælt Vest (E20)
-      [55.3400, 11.1300], // Korsør — Podul Storebælt Est (E20)
-      [55.4400, 11.7900], // Ringsted (E20)
-      [55.4900, 12.1800], // Køge (E20)
-      [55.6300, 12.5800], // Copenhaga Sud / Kastrup (E20)
-      [55.5700, 12.8900], // Podul Øresund (E20 — Traseu Rutier Camioane)
-      [55.6050, 13.0038], // Malmö Ring (E20/E6)
-      [55.8500, 12.8600], // Landskrona (E6)
-      [56.0465, 12.6945], // Helsingborg (E6/E4)
-      [56.6700, 13.5000], // Ljungby (E4)
-      [57.1800, 14.0400], // Värnamo (E4)
-      [57.7826, 14.1618], // Jönköping (E4)
-      [58.4108, 15.6214], // Linköping (E4)
-      [58.5877, 16.1924], // Norrköping (E4)
-      [58.7500, 17.0000], // Nyköping (E4)
-      [59.1955, 17.6253], // Södertälje (E4)
-      [59.3293, 18.0686], // Stockholm (E4)
-    ],
-    checkpoints: [
-      { city: 'Rotterdam', country: 'NL', coords: [51.9244, 4.4777], completed: true, eta: 'Plecat 05:00 (A12/A1)', techKm: '0 km (Start)', weatherType: 'rain', tempC: 9, weatherDesc: 'Ploaie ușoară', freeLdmAfter: 4.4 },
-      { city: 'Hamburg', country: 'DE', coords: [53.5511, 9.9937], completed: false, current: true, eta: 'Azi 13:30 (-2.4 LDM)', techKm: '490 km (+490 km)', weatherType: 'partly-cloudy', tempC: 7, weatherDesc: 'Parțial noros', freeLdmAfter: 6.8 },
-      { city: 'Malmö (Pod Øresund)', country: 'SE', coords: [55.6050, 13.0038], completed: false, eta: 'Mâine 06:30 (-2.8 LDM)', techKm: '880 km (+390 km)', weatherType: 'wind', tempC: 4, weatherDesc: 'Vânt 42 km/h', freeLdmAfter: 9.6 },
-      { city: 'Stockholm', country: 'SE', coords: [59.3293, 18.0686], completed: false, eta: 'Mâine 16:30 (E4 Final)', techKm: '1.460 km (+580 km)', weatherType: 'snow', tempC: 1, weatherDesc: 'Lapoviță · E4', freeLdmAfter: 13.6 },
-    ],
-  },
-  'BH 74 STS': {
-    trailerId: 'BH 74 STS',
-    tripCode: 'TR-4818',
-    highwayCorridor: 'M35 → M3 → M1 → A4 → A1 → A8 → A99 → A8',
-    color: '#7c3aed',
-    glowColor: 'rgba(124, 58, 237, 0.38)',
-    totalTechKm: 1090,
-    drivenKm: 860,
-    estDriveHours: '13h 40m',
-    transitWindow: '8 Noi 18:00 → 9 Noi 19:30',
-    coordinates: [
-      [47.0722, 21.9217], // Oradea
-      [47.5316, 21.6273], // Debrecen (M35)
-      [47.7850, 21.1200], // Polgár (M3)
-      [47.4100, 19.1500], // Budapesta (M0)
-      [47.6875, 17.6504], // Győr (M1)
-      [47.9144, 17.1528], // Hegyeshalom (M1/A4)
-      [48.2082, 16.3738], // Viena (A1)
-      [48.2600, 14.2900], // Linz (A1)
-      [48.4064, 13.4314], // Suben / Passau (A8/A3)
-      [48.5500, 12.1500], // Landshut / A92
-      [48.1351, 11.5820], // München (A99/A8)
-      [48.3705, 10.8978], // Augsburg (A8)
-      [48.4011, 9.9876],  // Ulm (A8)
-      [48.7758, 9.1829],  // Stuttgart (A8)
-    ],
-    checkpoints: [
-      { city: 'Oradea', country: 'RO', coords: [47.0722, 21.9217], completed: true, eta: 'Plecat Ieri (M35/M3)', techKm: '0 km (Start)', weatherType: 'sun', tempC: 12, weatherDesc: 'Senin · Uscat', freeLdmAfter: 1.2 },
-      { city: 'Suben', country: 'AT', coords: [48.4064, 13.4314], completed: true, eta: 'Trecut 09:00 (A8)', techKm: '690 km (+690 km)', weatherType: 'partly-cloudy', tempC: 8, weatherDesc: 'Parțial noros', freeLdmAfter: 1.2 },
-      { city: 'München', country: 'DE', coords: [48.1351, 11.5820], completed: false, current: true, eta: 'La descărcare (-2.8 LDM)', techKm: '860 km (+170 km)', weatherType: 'partly-cloudy', tempC: 6, weatherDesc: 'Nori trecători', freeLdmAfter: 4.0 },
-      { city: 'Stuttgart', country: 'DE', coords: [48.7758, 9.1829], completed: false, eta: 'Azi 19:30 (A8 Final)', techKm: '1.090 km (+230 km)', weatherType: 'rain', tempC: 7, weatherDesc: 'Burniță A8', freeLdmAfter: 13.6 },
-    ],
-  },
-  'BH 91 STS': {
-    trailerId: 'BH 91 STS',
-    tripCode: 'TR-4817',
-    highwayCorridor: 'A15 → A67 → A40 → A2 → A1 → A7 → E45 → E20 (Storebælt & Øresund) → E6',
-    color: '#0891b2',
-    glowColor: 'rgba(8, 145, 178, 0.35)',
-    totalTechKm: 1180,
-    drivenKm: 165,
-    estDriveHours: '14h 50m',
-    transitWindow: '9 Noi 07:30 → 10 Noi 14:00',
-    coordinates: [
-      [51.9244, 4.4777],  // Rotterdam
-      [51.8000, 4.6600],  // Dordrecht (A16)
-      [51.5800, 4.7700],  // Breda (A58)
-      [51.4100, 5.4800],  // Eindhoven (A67)
-      [51.3704, 6.1724],  // Venlo (A67/A40)
-      [51.4500, 6.7500],  // Duisburg (A40/A2)
-      [51.9600, 7.6200],  // Münster (A1)
-      [52.2799, 8.0472],  // Osnabrück (A1)
-      [53.0793, 8.8017],  // Bremen (A1)
-      [53.5511, 9.9937],  // Hamburg (A7)
-      [54.7800, 9.4300],  // Flensburg (A7)
-      [55.4904, 9.4722],  // Kolding (E45)
-      [55.3959, 10.3883], // Odense (E20)
-      [55.3100, 10.7900], // Pod Storebælt Vest
-      [55.3400, 11.1300], // Pod Storebælt Est
-      [55.6300, 12.5800], // Copenhaga (E20)
-      [55.5700, 12.8900], // Pod Øresund (E20)
-      [55.6050, 13.0038], // Malmö (E6)
-      [56.0465, 12.6945], // Helsingborg (E6)
-      [56.6700, 12.8500], // Halmstad (E6)
-      [57.1000, 12.2500], // Varberg (E6)
-      [57.7089, 11.9746], // Göteborg (E6)
-    ],
-    checkpoints: [
-      { city: 'Rotterdam', country: 'NL', coords: [51.9244, 4.4777], completed: true, eta: 'Plecat 07:30 (A15/A67)', techKm: '0 km (Start)', weatherType: 'wind', tempC: 9, weatherDesc: 'Vânt moderat', freeLdmAfter: 5.2 },
-      { city: 'Venlo', country: 'NL', coords: [51.3704, 6.1724], completed: false, current: true, eta: 'Încărcare grupaj (A67)', techKm: '165 km (+165 km)', weatherType: 'partly-cloudy', tempC: 8, weatherDesc: 'Parțial noros', freeLdmAfter: 5.2 },
-      { city: 'Kolding', country: 'DK', coords: [55.4904, 9.4722], completed: false, eta: 'Mâine 05:00 (-3.2 LDM)', techKm: '690 km (+525 km)', weatherType: 'rain', tempC: 5, weatherDesc: 'Ploaie E45', freeLdmAfter: 8.4 },
-      { city: 'Göteborg', country: 'SE', coords: [57.7089, 11.9746], completed: false, eta: 'Mâine 14:00 (E6 Final)', techKm: '1.180 km (+490 km)', weatherType: 'snow', tempC: 2, weatherDesc: 'Lapoviță ușoară', freeLdmAfter: 13.6 },
-    ],
-  },
-  'BH 23 STS': {
-    trailerId: 'BH 23 STS',
-    tripCode: 'EXP-104',
-    highwayCorridor: 'A3/M35 → M3 → M0 → M1 → A4 (Schmitz S.KO Cool 2025)',
-    color: '#06b6d4',
-    glowColor: 'rgba(6, 182, 212, 0.4)',
-    totalTechKm: 540,
-    drivenKm: 410,
-    estDriveHours: '6h 15m',
-    transitWindow: '9 Noi 07:00 → 9 Noi 13:15',
-    coordinates: [
-      [47.0722, 21.9217], // Oradea (RO)
-      [47.1310, 21.7950], // Borș II / A3
-      [47.5316, 21.6273], // Debrecen (M35)
-      [47.7850, 21.1200], // Polgár / M3 Junction
-      [47.7600, 20.3500], // Füzesabony (M3)
-      [47.6500, 19.6000], // Hatvan (M3)
-      [47.4100, 19.1500], // Budapesta Sud Ring (M0)
-      [47.4600, 18.8800], // Biatorbágy (M1)
-      [47.5692, 18.4048], // Tatabánya (M1)
-      [47.6875, 17.6504], // Győr (M1)
-      [47.9144, 17.1528], // Hegyeshalom / Nickelsdorf (M1/A4)
-      [48.0200, 16.7800], // Bruck an der Leitha (A4)
-      [48.1400, 16.4200], // Viena Schwechat / S1
-      [48.2082, 16.3738], // Viena (AT)
-    ],
-    checkpoints: [
-      { city: 'Oradea', country: 'RO', coords: [47.0722, 21.9217], completed: true, eta: 'Plecat 07:00 (Express)', techKm: '0 km (Start)', weatherType: 'sun', tempC: 11, weatherDesc: 'Senin · Uscat', freeLdmAfter: 0.8 },
-      { city: 'Budapesta', country: 'HU', coords: [47.4100, 19.1500], completed: true, eta: 'Trecut 10:45 (M0)', techKm: '295 km (+295 km)', weatherType: 'partly-cloudy', tempC: 10, weatherDesc: 'Parțial noros', freeLdmAfter: 0.8 },
-      { city: 'Viena', country: 'AT', coords: [48.2082, 16.3738], completed: false, current: true, eta: 'Azi 13:15 (Transfer)', techKm: '540 km (+245 km)', weatherType: 'partly-cloudy', tempC: 9, weatherDesc: 'Parțial noros', freeLdmAfter: 4.2 },
-    ],
-  },
-  'BH 31 STS': {
-    trailerId: 'BH 31 STS',
-    tripCode: 'EXP-108',
-    highwayCorridor: 'M5 → M0 → M1 → D2 → D1 → A5 (Schmitz S.KO Cool Bi-Temp)',
-    color: '#f59e0b',
-    glowColor: 'rgba(245, 158, 11, 0.4)',
-    totalTechKm: 480,
-    drivenKm: 320,
-    estDriveHours: '5h 50m',
-    transitWindow: '9 Noi 06:30 → 9 Noi 18:00',
-    coordinates: [
-      [46.2530, 20.1414], // Szeged (M5)
-      [46.7100, 19.8400], // Kiskunfélegyháza (M5)
-      [46.9000, 19.6900], // Kecskemét (M5)
-      [47.4100, 19.1500], // Budapesta Ring (M0)
-      [47.5692, 18.4048], // Tatabánya (M1)
-      [47.6875, 17.6504], // Győr (M1)
-      [47.8600, 17.2700], // Mosonmagyaróvár (M1/M15)
-      [48.0100, 17.2000], // Rajka / Čunovo (M15/D2)
-      [48.1486, 17.1077], // Bratislava (D2)
-      [48.4300, 17.0200], // Malacky (D2)
-      [48.7200, 16.9400], // Kúty / Břeclav (D2)
-      [48.9400, 16.7400], // Hustopeče (D2)
-      [49.1951, 16.6068], // Brno (D2/D1)
-      [48.7500, 16.6300], // Mikulov / Poysdorf (B7/A5)
-      [48.5700, 16.5700], // Mistelbach (A5)
-      [48.2082, 16.3738], // Viena (A5)
-    ],
-    checkpoints: [
-      { city: 'Szeged', country: 'HU', coords: [46.2530, 20.1414], completed: true, eta: 'Plecat 06:30 (M5)', techKm: '0 km (Start)', weatherType: 'sun', tempC: 12, weatherDesc: 'Senin · Uscat', freeLdmAfter: 1.4 },
-      { city: 'Bratislava', country: 'SK', coords: [48.1486, 17.1077], completed: false, current: true, eta: 'Azi 14:00 (-2.0 LDM)', techKm: '365 km (+365 km)', weatherType: 'partly-cloudy', tempC: 9, weatherDesc: 'Parțial noros', freeLdmAfter: 3.4 },
-      { city: 'Viena', country: 'AT', coords: [48.2082, 16.3738], completed: false, eta: 'Azi 18:00 (Final 7.5T)', techKm: '480 km (+115 km)', weatherType: 'partly-cloudy', tempC: 9, weatherDesc: 'Senin / Nori', freeLdmAfter: 6.2 },
-    ],
-  },
-};
 
 // Restul capetelor tractor reale din evidența flotei (Google Sheet).
 // ATENȚIE: pozițiile sunt de TEST (mock) — se înlocuiesc cu GPS real când e conectat furnizorul.
@@ -395,37 +88,101 @@ const osrmRoadGeometryCache: Record<string, [number, number][]> = {
   ...REAL_TRUCK_HIGHWAY_GEOMETRIES,
 };
 
+function buildFallbackItemsFromTrailers(trailers: TrailerUnit[]): MapTripItem[] {
+  const items: MapTripItem[] = [];
+  for (const trailer of trailers) {
+    const baseRoute = CORRIDOR_ROUTES[trailer.id];
+    if (!baseRoute) continue;
+    const fromCity = trailer.routeSummary[0] || baseRoute.checkpoints[0]?.city || '';
+    const toCity =
+      trailer.routeSummary[trailer.routeSummary.length - 1] ||
+      baseRoute.checkpoints[baseRoute.checkpoints.length - 1]?.city ||
+      '';
+    items.push({
+      mapId: trailer.id,
+      lifecycle: 'in_transit',
+      badgeLabel: 'În tranzit',
+      shortTimeBadge: 'LIVE',
+      scheduleFullLabel: baseRoute.transitWindow,
+      routeSummaryText: `${fromCity} → ${toCity}`,
+      trailer,
+      routeDef: baseRoute,
+    });
+  }
+  return items;
+}
+
 export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
   trailers,
+  activeTrips,
+  pastTrips = [],
+  singleTripItem,
+  tripScopeFilter,
+  onTripScopeFilterChange,
   onSelectTrailer,
   onNavigateSwap,
   heightClass = 'h-[360px] sm:h-[420px]',
   singleTripMode = false,
 }) => {
+  const mapHostWrapperRef = useRef<HTMLDivElement | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const weatherCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
   const weatherLayerGroupRef = useRef<L.LayerGroup | null>(null);
 
-  const isSingle = singleTripMode || trailers.length === 1;
-  const firstTrailerId = trailers[0]?.id || 'BH 67 STS';
+  const [internalScope, setInternalScope] = useState<'active' | 'past'>('active');
+  const effectiveScope = tripScopeFilter ?? internalScope;
 
-  const [focusedTrailerId, setFocusedTrailerId] = useState<string>(
-    isSingle ? firstTrailerId : 'ALL'
+  const setScope = (next: 'active' | 'past') => {
+    if (onTripScopeFilterChange) {
+      onTripScopeFilterChange(next);
+    } else {
+      setInternalScope(next);
+    }
+  };
+
+  const resolvedActiveTrips = useMemo<MapTripItem[]>(() => {
+    if (singleTripItem) return [singleTripItem];
+    if (activeTrips && activeTrips.length > 0) return activeTrips;
+    return buildFallbackItemsFromTrailers(trailers);
+  }, [singleTripItem, activeTrips, trailers]);
+
+  const resolvedPastTrips = useMemo<MapTripItem[]>(() => {
+    if (singleTripItem) return [];
+    return pastTrips;
+  }, [singleTripItem, pastTrips]);
+
+  const isSingle = singleTripMode || Boolean(singleTripItem) || ( !activeTrips && trailers.length === 1 );
+
+  const currentScopeItems = useMemo<MapTripItem[]>(() => {
+    if (isSingle) {
+      return singleTripItem ? [singleTripItem] : resolvedActiveTrips.slice(0, 1);
+    }
+    return effectiveScope === 'past' ? resolvedPastTrips : resolvedActiveTrips;
+  }, [isSingle, singleTripItem, effectiveScope, resolvedPastTrips, resolvedActiveTrips]);
+
+  const allKnownItems = useMemo<MapTripItem[]>(() => {
+    if (singleTripItem) return [singleTripItem];
+    return [...resolvedActiveTrips, ...resolvedPastTrips];
+  }, [singleTripItem, resolvedActiveTrips, resolvedPastTrips]);
+
+  const firstItemId = currentScopeItems[0]?.mapId || resolvedActiveTrips[0]?.mapId || 'BH 67 STS';
+
+  const [focusedMapId, setFocusedMapId] = useState<string>(
+    isSingle ? firstItemId : 'ALL'
   );
-  const [selectedTrackerId, setSelectedTrackerId] = useState<string>(
-    isSingle ? firstTrailerId : 'BH 67 STS'
-  );
+  const [selectedTrackerId, setSelectedTrackerId] = useState<string>(firstItemId);
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
   const [showWeatherRadar, setShowWeatherRadar] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('bluetrans_map_weather_on_v1') === '1';
+      const saved = localStorage.getItem('bluetrans_map_weather_on_v1');
+      return saved === null ? true : saved === '1';
     } catch {
-      return false;
+      return true;
     }
   });
 
-  // Dacă ai pornit vremea (ON), rămâne ON și după refresh / schimbarea paginii
   useEffect(() => {
     try {
       localStorage.setItem('bluetrans_map_weather_on_v1', showWeatherRadar ? '1' : '0');
@@ -433,38 +190,62 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       // ignore
     }
   }, [showWeatherRadar]);
-  const [isScrollZoomActive, setIsScrollZoomActive] = useState<boolean>(false);
+
   const [roadGeometries, setRoadGeometries] = useState<
     Record<string, [number, number][]>
   >(osrmRoadGeometryCache);
 
-  const toggleScrollZoom = () => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-    if (isScrollZoomActive) {
-      map.scrollWheelZoom.disable();
-      setIsScrollZoomActive(false);
-    } else {
-      map.scrollWheelZoom.enable();
-      setIsScrollZoomActive(true);
-    }
-  };
-
+  // Sync selection & map bounds when scope ('active' <-> 'past') or singleTripItem changes
   useEffect(() => {
-    if (isSingle && trailers[0]?.id) {
-      const targetId = trailers[0].id;
-      setFocusedTrailerId(targetId);
-      setSelectedTrackerId(targetId);
+    if (isSingle) {
+      const target = currentScopeItems[0];
+      if (!target) return;
+      setFocusedMapId(target.mapId);
+      setSelectedTrackerId(target.mapId);
       const map = mapInstanceRef.current;
-      const route = CORRIDOR_ROUTES[targetId];
-      if (map && route) {
-        const roadPath = roadGeometries[targetId] || route.coordinates;
-        const bounds = L.latLngBounds(roadPath);
-        map.fitBounds(bounds, { padding: [28, 28] });
+      if (map) {
+        const roadPath = roadGeometries[target.mapId] || target.routeDef.coordinates;
+        if (roadPath.length >= 2) {
+          map.fitBounds(L.latLngBounds(roadPath), { padding: [28, 28] });
+        }
         setTimeout(() => map.invalidateSize(), 100);
       }
+      return;
     }
-  }, [isSingle, firstTrailerId, roadGeometries]);
+
+    setFocusedMapId('ALL');
+    if (currentScopeItems.length > 0) {
+      setSelectedTrackerId((prev) =>
+        currentScopeItems.some((it) => it.mapId === prev)
+          ? prev
+          : currentScopeItems[0].mapId
+      );
+    }
+    const map = mapInstanceRef.current;
+    if (map && currentScopeItems.length > 0) {
+      const allPoints = currentScopeItems.flatMap(
+        (it) => roadGeometries[it.mapId] || it.routeDef.coordinates
+      );
+      if (allPoints.length >= 2) {
+        map.flyToBounds(L.latLngBounds(allPoints), {
+          padding: [28, 28],
+          duration: 0.55,
+        });
+      }
+    }
+  }, [isSingle, effectiveScope, singleTripItem?.mapId, singleTripItem?.routeSummaryText]);
+
+  // Re-fit single-trip bounds once OSRM geometry arrives
+  useEffect(() => {
+    if (!isSingle) return;
+    const target = currentScopeItems[0];
+    const map = mapInstanceRef.current;
+    if (!map || !target) return;
+    const roadPath = roadGeometries[target.mapId] || target.routeDef.coordinates;
+    if (roadPath.length >= 2) {
+      map.fitBounds(L.latLngBounds(roadPath), { padding: [28, 28] });
+    }
+  }, [isSingle, roadGeometries, currentScopeItems]);
 
   useEffect(() => {
     if (isFullScreen) {
@@ -473,7 +254,6 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     } else {
       document.body.classList.remove('modal-scroll-locked');
       document.body.style.overflow = '';
-      setIsScrollZoomActive(false);
     }
     const timer1 = setTimeout(() => {
       mapInstanceRef.current?.invalidateSize();
@@ -509,12 +289,12 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     setIsFullScreen((prev) => !prev);
   };
 
-  const activeRouteDef =
-    CORRIDOR_ROUTES[selectedTrackerId] || CORRIDOR_ROUTES['BH 67 STS'];
-  const activeTrailerObj =
-    trailers.find((t) => t.id === selectedTrackerId) || trailers[0];
+  const activeItem: MapTripItem | undefined =
+    currentScopeItems.find((it) => it.mapId === selectedTrackerId) ||
+    currentScopeItems[0] ||
+    resolvedActiveTrips[0];
 
-  // Fetch exact road geometry from OSRM driving router so routes follow 100% real highway curves (no ferry/aerial shortcuts)
+  // Fetch exact road geometry from OSRM driving router for both base corridors and newly created Planning trips
   useEffect(() => {
     let isMounted = true;
 
@@ -524,14 +304,16 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       };
       let changed = false;
 
-      for (const [trailerId, def] of Object.entries(CORRIDOR_ROUTES)) {
-        if (updated[trailerId]) continue;
+      for (const item of allKnownItems) {
+        if (updated[item.mapId]) continue;
+        const coordsList = item.routeDef.coordinates;
+        if (!coordsList || coordsList.length < 2) continue;
 
         try {
-          // Sample key motorway anchors (including Storebælt & Øresund bridges for SE routes) so OSRM stays strictly on road bridges
-          const step = Math.max(1, Math.floor(def.coordinates.length / 10));
-          const anchors = def.coordinates.filter(
-            (_, idx) => idx === 0 || idx === def.coordinates.length - 1 || idx % step === 0
+          const step = Math.max(1, Math.floor(coordsList.length / 8));
+          const anchors = coordsList.filter(
+            (_, idx) =>
+              idx === 0 || idx === coordsList.length - 1 || idx % step === 0
           );
           const coordString = anchors
             .map(([lat, lng]) => `${lng},${lat}`)
@@ -542,16 +324,16 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           if (!res.ok) continue;
           const data = await res.json();
           const coords = data?.routes?.[0]?.geometry?.coordinates;
-          if (Array.isArray(coords) && coords.length > 20) {
+          if (Array.isArray(coords) && coords.length > 12) {
             const latLngs: [number, number][] = coords.map(
               (pair: [number, number]) => [pair[1], pair[0]]
             );
-            updated[trailerId] = latLngs;
-            osrmRoadGeometryCache[trailerId] = latLngs;
+            updated[item.mapId] = latLngs;
+            osrmRoadGeometryCache[item.mapId] = latLngs;
             changed = true;
           }
         } catch {
-          // Fallback is the dense 35-point motorway waypoint array in CORRIDOR_ROUTES
+          // Fallback is the terrestrial corridor waypoint array in item.routeDef.coordinates
         }
       }
 
@@ -564,7 +346,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [allKnownItems]);
 
   // Initialize Leaflet Map (re-mounts cleanly when switching between inline and Full Screen portal)
   useEffect(() => {
@@ -597,17 +379,29 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     layerGroupRef.current = group;
     weatherLayerGroupRef.current = weatherGroup;
 
-    const targetId = isSingle
-      ? firstTrailerId
-      : focusedTrailerId !== 'ALL'
-        ? focusedTrailerId
+    const targetItem = isSingle
+      ? currentScopeItems[0]
+      : focusedMapId !== 'ALL'
+        ? currentScopeItems.find((it) => it.mapId === focusedMapId)
         : undefined;
-    const singleRoute = targetId ? CORRIDOR_ROUTES[targetId] : undefined;
 
-    if (singleRoute && targetId) {
-      const roadPath = roadGeometries[targetId] || singleRoute.coordinates;
-      const singleBounds = L.latLngBounds(roadPath);
-      map.fitBounds(singleBounds, { padding: isFullScreen ? [56, 56] : [28, 28] });
+    if (targetItem) {
+      const roadPath =
+        roadGeometries[targetItem.mapId] || targetItem.routeDef.coordinates;
+      if (roadPath.length >= 2) {
+        map.fitBounds(L.latLngBounds(roadPath), {
+          padding: isFullScreen ? [56, 56] : [28, 28],
+        });
+      }
+    } else if (currentScopeItems.length > 0) {
+      const allPts = currentScopeItems.flatMap(
+        (it) => roadGeometries[it.mapId] || it.routeDef.coordinates
+      );
+      if (allPts.length >= 2) {
+        map.fitBounds(L.latLngBounds(allPts), {
+          padding: isFullScreen ? [48, 48] : [24, 24],
+        });
+      }
     } else {
       const mainBounds = L.latLngBounds([
         [46.8, 4.2],
@@ -616,17 +410,22 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       map.fitBounds(mainBounds, { padding: isFullScreen ? [48, 48] : [24, 24] });
     }
 
-    setTimeout(() => {
+    const initTimer = setTimeout(() => {
+      if (!mapInstanceRef.current || !mapContainerRef.current?.isConnected) return;
       map.invalidateSize();
-      if (singleRoute && targetId) {
-        const roadPath = roadGeometries[targetId] || singleRoute.coordinates;
-        map.fitBounds(L.latLngBounds(roadPath), {
-          padding: isFullScreen ? [56, 56] : [28, 28],
-        });
+      if (targetItem) {
+        const roadPath =
+          roadGeometries[targetItem.mapId] || targetItem.routeDef.coordinates;
+        if (roadPath.length >= 2) {
+          map.fitBounds(L.latLngBounds(roadPath), {
+            padding: isFullScreen ? [56, 56] : [28, 28],
+          });
+        }
       }
     }, 120);
 
     const resizeObs = new ResizeObserver(() => {
+      if (!mapInstanceRef.current || !mapContainerRef.current?.isConnected) return;
       map.invalidateSize();
     });
     if (mapContainerRef.current) {
@@ -634,7 +433,9 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     }
 
     return () => {
+      clearTimeout(initTimer);
       resizeObs.disconnect();
+      map.stop();
       map.remove();
       mapInstanceRef.current = null;
       layerGroupRef.current = null;
@@ -642,105 +443,81 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     };
   }, [isFullScreen]);
 
-  // AccuWeather-Style Weather Radar Overlay (Rain Fronts, Snow Zones & Animated Wind Streamlines — Clean Apple Icons, Zero Text Clutter)
+  // Live AccuWeather Doppler Radar Tiles + 60fps Animated Wind Streamlines & Rain/Snow Canvas
   useEffect(() => {
     const map = mapInstanceRef.current;
     const weatherGroup = weatherLayerGroupRef.current;
+    const canvas = weatherCanvasRef.current;
+    const hostEl = mapHostWrapperRef.current || mapContainerRef.current;
     if (!map || !weatherGroup) return;
 
     weatherGroup.clearLayers();
-    if (!showWeatherRadar) return;
+    if (!showWeatherRadar) {
+      if (canvas) {
+        const c2d = canvas.getContext('2d');
+        c2d?.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      return;
+    }
+
+    const detachRadarTiles = attachLiveRainViewerRadar(map);
+    const stopCanvasAnim =
+      canvas && hostEl
+        ? startAccuWeatherCanvasAnimation(map, canvas, hostEl)
+        : () => {};
 
     const getSvgWeatherPin = (kind: 'rain' | 'wind' | 'snow' | 'sun') => {
       if (kind === 'sun') {
-        return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5.5" fill="#FBBF24"/><g stroke="#F59E0B" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.9" y1="4.9" x2="6.7" y2="6.7"/><line x1="17.3" y1="17.3" x2="19.1" y2="19.1"/><line x1="19.1" y1="4.9" x2="17.3" y2="6.7"/><line x1="6.7" y1="17.3" x2="4.9" y2="19.1"/></g></svg>`;
+        return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5.5" fill="#FBBF24"/><g stroke="#F59E0B" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.9" y1="4.9" x2="6.7" y2="6.7"/><line x1="17.3" y1="17.3" x2="19.1" y2="19.1"/><line x1="19.1" y1="4.9" x2="17.3" y2="6.7"/><line x1="6.7" y1="17.3" x2="4.9" y2="19.1"/></g></svg>`;
       }
       if (kind === 'snow') {
-        return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8.5 15H17.2C19.3 15 21 13.4 21 11.3C21 9.4 19.6 7.8 17.8 7.6C17.1 5.2 14.9 3.5 12.3 3.5C9.3 3.5 6.9 5.7 6.6 8.6C5 9 3.8 10.4 3.8 12.1C3.8 13.7 5.1 15 6.8 15H8.5Z" fill="#38BDF8"/><circle cx="8.5" cy="18.5" r="1.4" fill="#E0F2FE"/><circle cx="12.5" cy="19.8" r="1.4" fill="#E0F2FE"/><circle cx="16.5" cy="18.5" r="1.4" fill="#E0F2FE"/></svg>`;
+        return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M8.5 15H17.2C19.3 15 21 13.4 21 11.3C21 9.4 19.6 7.8 17.8 7.6C17.1 5.2 14.9 3.5 12.3 3.5C9.3 3.5 6.9 5.7 6.6 8.6C5 9 3.8 10.4 3.8 12.1C3.8 13.7 5.1 15 6.8 15H8.5Z" fill="#38BDF8"/><circle cx="8.5" cy="18.5" r="1.4" fill="#E0F2FE"/><circle cx="12.5" cy="19.8" r="1.4" fill="#E0F2FE"/><circle cx="16.5" cy="18.5" r="1.4" fill="#E0F2FE"/></svg>`;
       }
       if (kind === 'wind') {
-        return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 9.5H16.5C18.2 9.5 19.5 8.2 19.5 6.5C19.5 4.8 18.2 3.5 16.5 3.5C15 3.5 13.8 4.6 13.6 6" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/><path d="M3 14H18.5C20.2 14 21.5 15.3 21.5 17C21.5 18.7 20.2 20 18.5 20C17 20 15.8 18.9 15.6 17.5" stroke="#0EA5E9" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+        return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 9.5H16.5C18.2 9.5 19.5 8.2 19.5 6.5C19.5 4.8 18.2 3.5 16.5 3.5C15 3.5 13.8 4.6 13.6 6" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/><path d="M3 14H18.5C20.2 14 21.5 15.3 21.5 17C21.5 18.7 20.2 20 18.5 20C17 20 15.8 18.9 15.6 17.5" stroke="#0EA5E9" stroke-width="2.2" stroke-linecap="round"/></svg>`;
       }
-      return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8.5 15.5H17.2C19.3 15.5 21 13.9 21 11.8C21 9.9 19.6 8.3 17.8 8.1C17.1 5.7 14.9 4 12.3 4C9.3 4 6.9 6.2 6.6 9.1C5 9.5 3.8 10.9 3.8 12.6C3.8 14.2 5.1 15.5 6.8 15.5H8.5Z" fill="#3B82F6"/><g stroke="#38BDF8" stroke-width="2" stroke-linecap="round"><line x1="8.5" y1="17.5" x2="7.5" y2="20.5"/><line x1="12.5" y1="17.5" x2="11.5" y2="20.5"/><line x1="16.5" y1="17.5" x2="15.5" y2="20.5"/></g></svg>`;
+      return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M8.5 15.5H17.2C19.3 15.5 21 13.9 21 11.8C21 9.9 19.6 8.3 17.8 8.1C17.1 5.7 14.9 4 12.3 4C9.3 4 6.9 6.2 6.6 9.1C5 9.5 3.8 10.9 3.8 12.6C3.8 14.2 5.1 15.5 6.8 15.5H8.5Z" fill="#3B82F6"/><g stroke="#38BDF8" stroke-width="2" stroke-linecap="round"><line x1="8.5" y1="17.5" x2="7.5" y2="20.5"/><line x1="12.5" y1="17.5" x2="11.5" y2="20.5"/><line x1="16.5" y1="17.5" x2="15.5" y2="20.5"/></g></svg>`;
     };
 
-    const radarFronts: {
+    const synopticBadges: {
       center: [number, number];
-      outerRadiusM: number;
-      innerRadiusM: number;
-      outerColor: string;
-      innerColor: string;
+      borderColor: string;
       kind: 'rain' | 'wind' | 'snow' | 'sun';
-      temp: string;
+      label: string;
     }[] = [
       {
-        center: [50.45, 7.85], // Rhine-Main A3/A61 (Frankfurt -> Köln)
-        outerRadiusM: 175000,
-        innerRadiusM: 90000,
-        outerColor: '#22c55e',
-        innerColor: '#0284c7',
+        center: [50.45, 7.85],
+        borderColor: '#22c55e',
         kind: 'rain',
-        temp: '+7°C',
+        label: '+7°C · Ploaie',
       },
       {
-        center: [52.65, 6.85], // Rotterdam -> Bremen -> Hamburg (A12/A1)
-        outerRadiusM: 195000,
-        innerRadiusM: 100000,
-        outerColor: '#06b6d4',
-        innerColor: '#2563eb',
+        center: [52.65, 6.25],
+        borderColor: '#eab308',
         kind: 'rain',
-        temp: '+8°C',
+        label: '+8°C · Averse',
       },
       {
-        center: [55.45, 10.65], // Kolding -> Storebælt -> Øresund (E45/E20)
-        outerRadiusM: 155000,
-        innerRadiusM: 80000,
-        outerColor: '#38bdf8',
-        innerColor: '#0284c7',
+        center: [55.52, 11.15],
+        borderColor: '#38bdf8',
         kind: 'wind',
-        temp: '+4°C · 42 km/h',
+        label: '+4°C · 42 km/h',
       },
       {
-        center: [58.35, 15.65], // Jönköping -> Linköping -> Stockholm (E4)
-        outerRadiusM: 210000,
-        innerRadiusM: 105000,
-        outerColor: '#38bdf8',
-        innerColor: '#6366f1',
+        center: [58.35, 15.65],
+        borderColor: '#818cf8',
         kind: 'snow',
-        temp: '+1°C',
+        label: '+1°C · Ninsoare',
       },
       {
-        center: [47.35, 20.15], // Oradea -> Debrecen -> Budapesta (M35/M3)
-        outerRadiusM: 165000,
-        innerRadiusM: 80000,
-        outerColor: '#f59e0b',
-        innerColor: '#eab308',
+        center: [47.35, 20.15],
+        borderColor: '#f59e0b',
         kind: 'sun',
-        temp: '+11°C',
+        label: '+11°C · 24 km/h',
       },
     ];
 
-    radarFronts.forEach((front) => {
-      L.circle(front.center, {
-        radius: front.outerRadiusM,
-        color: front.outerColor,
-        weight: 1,
-        opacity: 0.35,
-        fillColor: front.outerColor,
-        fillOpacity: 0.16,
-        className: 'accuweather-radar-cell',
-      }).addTo(weatherGroup);
-
-      L.circle(front.center, {
-        radius: front.innerRadiusM,
-        color: front.innerColor,
-        weight: 1.5,
-        opacity: 0.5,
-        fillColor: front.innerColor,
-        fillOpacity: 0.24,
-        className: 'accuweather-radar-cell',
-      }).addTo(weatherGroup);
-
+    synopticBadges.forEach((front) => {
       const frontBadge = L.divIcon({
         className: 'accuweather-front-badge',
         html: `
@@ -750,19 +527,19 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
             align-items:center;
             gap:5px;
             width:max-content;
-            background:rgba(15, 23, 42, 0.94);
-            border:1.5px solid ${front.outerColor};
+            background:rgba(15, 23, 42, 0.90);
+            border:1.5px solid ${front.borderColor};
             border-radius:9999px;
-            padding:3px 9px;
+            padding:2.5px 8.5px;
             color:#ffffff;
-            font-size:10.5px;
+            font-size:10px;
             font-weight:800;
             white-space:nowrap;
             box-shadow:0 4px 12px rgba(0,0,0,0.45);
             pointer-events:none;
           ">
             ${getSvgWeatherPin(front.kind)}
-            <span style="color:#ffffff;">${front.temp}</span>
+            <span style="color:#ffffff;">${front.label}</span>
           </div>
         `,
         iconSize: [0, 0],
@@ -771,9 +548,14 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         weatherGroup
       );
     });
+
+    return () => {
+      detachRadarTiles();
+      stopCanvasAnim();
+    };
   }, [showWeatherRadar, isFullScreen]);
 
-  // Render Real Road Corridors, Checkpoints, Swap Hubs, and Truck Markers
+  // Render Real Road Corridors, Checkpoints, Swap Hubs, and Status-Aware Truck Markers
   useEffect(() => {
     const map = mapInstanceRef.current;
     const group = layerGroupRef.current;
@@ -781,22 +563,33 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
 
     group.clearLayers();
 
-    const visibleTrailers =
-      focusedTrailerId === 'ALL'
-        ? trailers
-        : trailers.filter((t) => t.id === focusedTrailerId);
+    const visibleItems =
+      focusedMapId === 'ALL'
+        ? currentScopeItems
+        : currentScopeItems.filter((it) => it.mapId === focusedMapId);
 
-    visibleTrailers.forEach((trailer) => {
-      const route = CORRIDOR_ROUTES[trailer.id];
-      if (!route) return;
+    const activePlatesOnMap = new Set<string>();
+
+    visibleItems.forEach((item) => {
+      const { trailer, routeDef: route, lifecycle } = item;
+      const trPlate = trailer.tractorId.split(' (')[0];
+      activePlatesOnMap.add(trailer.id);
+      if (trPlate) activePlatesOnMap.add(trPlate);
 
       const isHighlighted =
-        focusedTrailerId === trailer.id || selectedTrackerId === trailer.id;
+        focusedMapId === item.mapId || selectedTrackerId === item.mapId;
 
-      // Use OSRM full road geometry if loaded, otherwise dense motorway waypoints
-      const roadPath = roadGeometries[trailer.id] || route.coordinates;
+      const roadPath = roadGeometries[item.mapId] || route.coordinates;
+      if (!roadPath || roadPath.length < 2) return;
 
-      // 1. Road Casing / Culoar Autostradă (Solid Road Border, ZERO dashed aerial lines!)
+      const lineColor =
+        lifecycle === 'past'
+          ? isHighlighted
+            ? '#10b981'
+            : '#64748b'
+          : route.color;
+
+      // 1. Road Casing
       L.polyline(roadPath, {
         color: '#0f172a',
         weight: isHighlighted ? 7.5 : 4.5,
@@ -805,16 +598,17 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         lineJoin: 'round',
       }).addTo(group);
 
-      // 2. Inner Crisp Highway Route Line
+      // 2. Highway Route Line (Solid for În tranzit & Trecute, Crisp Planned Dash along Highway for Planificată)
       L.polyline(roadPath, {
-        color: route.color,
+        color: lineColor,
         weight: isHighlighted ? 4.5 : 2.5,
-        opacity: isHighlighted ? 0.98 : 0.65,
+        opacity: isHighlighted ? 0.98 : 0.68,
+        dashArray: lifecycle === 'planned' ? '8 6' : undefined,
         lineCap: 'round',
         lineJoin: 'round',
       }).addTo(group);
 
-      // 3. Checkpoint City Dots along the active route
+      // 3. Checkpoint City Dots along the highlighted route
       if (isHighlighted) {
         route.checkpoints.forEach((cp) => {
           const dotIcon = L.divIcon({
@@ -831,7 +625,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                   height:10px;
                   border-radius:9999px;
                   background:${cp.completed ? '#16a34a' : '#ffffff'};
-                  border:2.5px solid ${cp.completed ? '#16a34a' : route.color};
+                  border:2.5px solid ${cp.completed ? '#16a34a' : lineColor};
                   box-shadow:0 2px 6px rgba(0,0,0,0.45);
                 "></div>
                 <span style="
@@ -854,16 +648,43 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         });
       }
 
-      // 4. Live GPS Truck Marker
+      // 4. Status-Aware Marker (Live Truck vs Planned Departure vs Completed Check)
       const truckCoords: [number, number] = [
         trailer.currentLocation.lat,
         trailer.currentLocation.lng,
       ];
-      const trPlate = trailer.tractorId.split(' (')[0];
       const plateDisplay =
         trPlate && trPlate !== trailer.id
           ? `${trPlate} + ${trailer.id}`
           : trailer.id;
+
+      const rightPillText =
+        lifecycle === 'past'
+          ? `✓ ${item.shortTimeBadge}`
+          : lifecycle === 'planned'
+            ? `◷ ${item.shortTimeBadge}`
+            : `${trailer.freeLdm.toFixed(1)} LDM`;
+
+      const rightPillColor =
+        lifecycle === 'past'
+          ? '#34d399'
+          : lifecycle === 'planned'
+            ? '#fbbf24'
+            : '#4ade80';
+
+      const iconGlyph =
+        lifecycle === 'past'
+          ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`
+          : lifecycle === 'planned'
+            ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`
+            : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>`;
+
+      const pinBg =
+        lifecycle === 'past'
+          ? '#059669'
+          : lifecycle === 'planned'
+            ? '#d97706'
+            : lineColor;
 
       const truckIcon = L.divIcon({
         className: 'custom-truck-marker',
@@ -881,7 +702,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
               width:32px;
               height:32px;
               border-radius:9999px;
-              background:${route.color};
+              background:${pinBg};
               border:2.5px solid #ffffff;
               box-shadow:0 4px 14px rgba(0,0,0,0.55);
               display:flex;
@@ -890,17 +711,11 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
               color:#ffffff;
               flex-shrink:0;
             ">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/>
-                <path d="M15 18H9"/>
-                <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/>
-                <circle cx="17" cy="18" r="2"/>
-                <circle cx="7" cy="18" r="2"/>
-              </svg>
+              ${iconGlyph}
             </div>
             <div style="
               background:rgba(15, 23, 42, 0.96);
-              border:1.5px solid ${route.color};
+              border:1.5px solid ${pinBg};
               border-radius:9999px;
               padding:3px 8px;
               box-shadow:0 4px 12px rgba(0,0,0,0.45);
@@ -940,8 +755,8 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                   align-items:center;
                 ">${plateDisplay}</span>
               </span>
-              <span style="color:#4ade80;font-weight:800;font-size:10px;">
-                ${trailer.freeLdm.toFixed(1)} LDM
+              <span style="color:${rightPillColor};font-weight:800;font-size:10px;">
+                ${rightPillText}
               </span>
             </div>
           </div>
@@ -952,7 +767,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
             width:26px;
             height:26px;
             border-radius:9999px;
-            background:${route.color};
+            background:${pinBg};
             border:2px solid #ffffff;
             box-shadow:0 2px 8px rgba(0,0,0,0.5);
             display:flex;
@@ -960,14 +775,8 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
             justify-content:center;
             color:#ffffff;
             cursor:pointer;
-          " title="${plateDisplay} (${trailer.freeLdm.toFixed(1)} LDM liberi)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/>
-              <path d="M15 18H9"/>
-              <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/>
-              <circle cx="17" cy="18" r="2"/>
-              <circle cx="7" cy="18" r="2"/>
-            </svg>
+          " title="${plateDisplay} · ${item.routeSummaryText} (${item.badgeLabel})">
+            ${iconGlyph}
           </div>
         `,
         iconSize: [0, 0],
@@ -975,101 +784,121 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
 
       const marker = L.marker(truckCoords, {
         icon: truckIcon,
-        zIndexOffset: isHighlighted ? 1000 : 100,
+        zIndexOffset: isHighlighted ? 1000 : lifecycle === 'in_transit' ? 200 : 120,
       }).addTo(group);
 
       marker.on('click', () => {
-        setSelectedTrackerId(trailer.id);
+        setSelectedTrackerId(item.mapId);
         const bounds = L.latLngBounds(roadPath);
         map.flyToBounds(bounds, { padding: [36, 36], duration: 0.8 });
       });
     });
 
-    // 5. Smart Trailer Swap Hubs (Autohof Parking Markers)
-    SWAP_HUBS.forEach((hub) => {
-      const swapIcon = L.divIcon({
-        className: 'custom-swap-marker',
-        html: `
-          <div style="
-            transform:translate(-12px, -12px);
-            width:24px;
-            height:24px;
-            border-radius:9999px;
-            background:#0f172a;
-            border:2px solid #f59e0b;
-            box-shadow:0 2px 8px rgba(0,0,0,0.5);
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            color:#f59e0b;
-            font-size:11px;
-            font-weight:800;
-            cursor:pointer;
-          " title="${hub.name} — ${hub.desc}">
-            ⇄
-          </div>
-        `,
-        iconSize: [0, 0],
-      });
-
-      const swapMarker = L.marker(hub.coords, { icon: swapIcon }).addTo(group);
-      swapMarker.on('click', () => {
-        if (onNavigateSwap) onNavigateSwap();
-      });
-    });
-
-    // 6. Restul flotei reale (capete tractor din evidența flotei) — POZIȚII DE TEST până se conectează GPS-ul real
-    if (!isSingle && focusedTrailerId === 'ALL') {
-      MOCK_FLEET_POSITIONS.forEach((v) => {
-        const fleetIcon = L.divIcon({
-          className: 'custom-fleet-marker',
+    // 5. Smart Trailer Swap Hubs & Idle Fleet Pins ONLY in Active overview (never in Trecute)
+    if (effectiveScope === 'active' && !isSingle) {
+      SWAP_HUBS.forEach((hub) => {
+        const swapIcon = L.divIcon({
+          className: 'custom-swap-marker',
           html: `
             <div style="
-              transform:translate(-50%, -50%);
-              display:inline-flex;
-              align-items:center;
-              gap:4px;
-              width:max-content;
-              background:rgba(15,23,42,0.92);
-              border:1.5px solid #64748b;
+              transform:translate(-12px, -12px);
+              width:24px;
+              height:24px;
               border-radius:9999px;
-              padding:2px 8px 2px 4px;
-              color:#ffffff;
-              font-size:10px;
+              background:#0f172a;
+              border:2px solid #f59e0b;
+              box-shadow:0 2px 8px rgba(0,0,0,0.5);
+              display:flex;
+              align-items:center;
+              justify-content:center;
+              color:#f59e0b;
+              font-size:11px;
               font-weight:800;
-              white-space:nowrap;
-              box-shadow:0 2px 8px rgba(0,0,0,0.45);
               cursor:pointer;
-            " title="${v.plate} — ${v.place} (poziție de test, GPS neconectat)">
-              <span style="width:9px;height:9px;border-radius:9999px;background:#94a3b8;display:inline-block;"></span>
-              <span style="color:#ffffff;">${v.plate}</span>
+            " title="${hub.name} — ${hub.desc}">
+              ⇄
             </div>
           `,
           iconSize: [0, 0],
         });
-        L.marker(v.coords, { icon: fleetIcon, zIndexOffset: 50 }).addTo(group);
-      });
-    }
-  }, [trailers, focusedTrailerId, selectedTrackerId, roadGeometries, onNavigateSwap, isFullScreen]);
 
-  const handleFocusCorridor = (id: string) => {
-    setFocusedTrailerId(id);
+        const swapMarker = L.marker(hub.coords, { icon: swapIcon }).addTo(group);
+        swapMarker.on('click', () => {
+          if (onNavigateSwap) onNavigateSwap();
+        });
+      });
+
+      if (focusedMapId === 'ALL') {
+        MOCK_FLEET_POSITIONS.forEach((v) => {
+          if (activePlatesOnMap.has(v.plate)) return;
+          const fleetIcon = L.divIcon({
+            className: 'custom-fleet-marker',
+            html: `
+              <div style="
+                transform:translate(-50%, -50%);
+                display:inline-flex;
+                align-items:center;
+                gap:4px;
+                width:max-content;
+                background:rgba(15,23,42,0.92);
+                border:1.5px solid #64748b;
+                border-radius:9999px;
+                padding:2px 8px 2px 4px;
+                color:#ffffff;
+                font-size:10px;
+                font-weight:800;
+                white-space:nowrap;
+                box-shadow:0 2px 8px rgba(0,0,0,0.45);
+                cursor:pointer;
+              " title="${v.plate} — ${v.place} (fără cursă activă)">
+                <span style="width:9px;height:9px;border-radius:9999px;background:#94a3b8;display:inline-block;"></span>
+                <span style="color:#ffffff;">${v.plate}</span>
+              </div>
+            `,
+            iconSize: [0, 0],
+          });
+          L.marker(v.coords, { icon: fleetIcon, zIndexOffset: 50 }).addTo(group);
+        });
+      }
+    }
+  }, [
+    currentScopeItems,
+    effectiveScope,
+    isSingle,
+    focusedMapId,
+    selectedTrackerId,
+    roadGeometries,
+    onNavigateSwap,
+    isFullScreen,
+  ]);
+
+  const handleFocusCorridor = (mapId: string) => {
+    setFocusedMapId(mapId);
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    if (id === 'ALL') {
-      const mainBounds = L.latLngBounds([
-        [46.8, 4.2],
-        [56.2, 22.2],
-      ]);
-      map.flyToBounds(mainBounds, { padding: [24, 24], duration: 0.8 });
+    if (mapId === 'ALL') {
+      const allPts = currentScopeItems.flatMap(
+        (it) => roadGeometries[it.mapId] || it.routeDef.coordinates
+      );
+      if (allPts.length >= 2) {
+        map.flyToBounds(L.latLngBounds(allPts), {
+          padding: [24, 24],
+          duration: 0.7,
+        });
+      }
     } else {
-      setSelectedTrackerId(id);
-      const route = CORRIDOR_ROUTES[id];
-      if (route) {
-        const roadPath = roadGeometries[id] || route.coordinates;
-        const bounds = L.latLngBounds(roadPath);
-        map.flyToBounds(bounds, { padding: [36, 36], duration: 0.8 });
+      setSelectedTrackerId(mapId);
+      const found = currentScopeItems.find((it) => it.mapId === mapId);
+      if (found) {
+        const roadPath =
+          roadGeometries[found.mapId] || found.routeDef.coordinates;
+        if (roadPath.length >= 2) {
+          map.flyToBounds(L.latLngBounds(roadPath), {
+            padding: [36, 36],
+            duration: 0.75,
+          });
+        }
       }
     }
   };
@@ -1078,7 +907,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     switch (type) {
       case 'sun':
         return (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
             <circle cx="12" cy="12" r="5.5" fill="#F59E0B" />
             <circle cx="12" cy="12" r="4.2" fill="#FBBF24" />
             <g stroke="#F59E0B" strokeWidth="1.8" strokeLinecap="round">
@@ -1095,7 +924,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         );
       case 'partly-cloudy':
         return (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
             <circle cx="9" cy="9" r="4" fill="#F59E0B" />
             <g stroke="#F59E0B" strokeWidth="1.5" strokeLinecap="round">
               <line x1="9" y1="2.5" x2="9" y2="3.8" />
@@ -1114,7 +943,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         );
       case 'rain':
         return (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
             <path
               d="M8.5 15.5H17.2C19.3 15.5 21 13.9 21 11.8C21 9.9 19.6 8.3 17.8 8.1C17.1 5.7 14.9 4 12.3 4C9.3 4 6.9 6.2 6.6 9.1C5 9.5 3.8 10.9 3.8 12.6C3.8 14.2 5.1 15.5 6.8 15.5H8.5Z"
               fill="#3B82F6"
@@ -1129,7 +958,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         );
       case 'snow':
         return (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
             <path
               d="M8.5 15H17.2C19.3 15 21 13.4 21 11.3C21 9.4 19.6 7.8 17.8 7.6C17.1 5.2 14.9 3.5 12.3 3.5C9.3 3.5 6.9 5.7 6.6 8.6C5 9 3.8 10.4 3.8 12.1C3.8 13.7 5.1 15 6.8 15H8.5Z"
               fill="#38BDF8"
@@ -1144,7 +973,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         );
       case 'wind':
         return (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
             <path
               d="M3 9.5H16.5C18.2 9.5 19.5 8.2 19.5 6.5C19.5 4.8 18.2 3.5 16.5 3.5C15 3.5 13.8 4.6 13.6 6"
               stroke="#0EA5E9"
@@ -1195,12 +1024,13 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
   );
 
   const renderMapControlsBar = () => (
-    <div className="absolute top-3 right-3 z-[450] flex items-center gap-1.5">
-      {/* Apple Weather Icons + iOS Toggle Switch (Zero Text Clutter) */}
+    <div className="absolute top-2.5 left-2.5 right-2.5 sm:left-auto sm:top-3 sm:right-3 z-[450] flex items-center justify-end gap-1 sm:gap-1.5">
       <button
         type="button"
         onClick={() => setShowWeatherRadar((prev) => !prev)}
-        className="px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 flex items-center gap-2 shadow-lg cursor-pointer transition"
+        aria-pressed={showWeatherRadar}
+        aria-label="Comută radar meteo pe hartă"
+        className="px-2 sm:px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 flex items-center gap-1.5 sm:gap-2 shadow-lg cursor-pointer transition shrink-0"
         style={{
           backgroundColor: 'rgba(15, 23, 42, 0.92)',
           color: '#ffffff',
@@ -1229,74 +1059,81 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       <button
         type="button"
         onClick={handleZoomIn}
-        className="px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1 shadow-lg cursor-pointer"
+        aria-label="Mărește harta"
+        className="px-2.5 sm:px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1 shadow-lg cursor-pointer shrink-0 whitespace-nowrap"
         style={{
           backgroundColor: 'rgba(15, 23, 42, 0.92)',
           color: '#ffffff',
         }}
-        title="Zoom In (+)"
       >
-        <ZoomIn className="w-3.5 h-3.5" style={{ color: '#4ade80' }} />
+        <ZoomIn className="w-3.5 h-3.5" style={{ color: '#4ade80' }} aria-hidden="true" />
         <span style={{ color: '#ffffff' }}>+</span>
       </button>
 
       <button
         type="button"
         onClick={handleZoomOut}
-        className="px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1 shadow-lg cursor-pointer"
+        aria-label="Micșorează harta"
+        className="px-2.5 sm:px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1 shadow-lg cursor-pointer shrink-0 whitespace-nowrap"
         style={{
           backgroundColor: 'rgba(15, 23, 42, 0.92)',
           color: '#ffffff',
         }}
-        title="Zoom Out (-)"
       >
-        <ZoomOut className="w-3.5 h-3.5" style={{ color: '#38bdf8' }} />
+        <ZoomOut className="w-3.5 h-3.5" style={{ color: '#38bdf8' }} aria-hidden="true" />
         <span style={{ color: '#ffffff' }}>−</span>
       </button>
 
       <button
         type="button"
         onClick={handleToggleFullScreen}
-        className="px-3.5 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer"
+        aria-label={isFullScreen ? 'Închide harta pe tot ecranul' : 'Deschide harta pe tot ecranul'}
+        className="px-2.5 sm:px-3.5 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer shrink-0 whitespace-nowrap"
         style={{
           backgroundColor: isFullScreen
             ? 'rgba(239, 68, 68, 0.95)'
             : 'rgba(15, 23, 42, 0.92)',
           color: '#ffffff',
         }}
-        title={isFullScreen ? 'Închide Full Screen' : 'Full Screen'}
       >
         {isFullScreen ? (
           <>
-            <Minimize2 className="w-3.5 h-3.5" style={{ color: '#ffffff' }} />
+            <Minimize2 className="w-3.5 h-3.5 shrink-0" style={{ color: '#ffffff' }} aria-hidden="true" />
             <span style={{ color: '#ffffff' }}>Închide</span>
           </>
         ) : (
           <>
-            <Maximize2 className="w-3.5 h-3.5" style={{ color: '#38bdf8' }} />
-            <span style={{ color: '#ffffff' }}>Full Screen</span>
+            <Maximize2 className="w-3.5 h-3.5 shrink-0" style={{ color: '#38bdf8' }} aria-hidden="true" />
+            <span className="hidden min-[360px]:inline" style={{ color: '#ffffff' }}>Full Screen</span>
           </>
         )}
       </button>
     </div>
   );
 
-  // Full Screen Portal: 100% True Viewport Map Showing ONLY the Route (No Sidebars, No Clutter)
+  const activeRouteDef = activeItem?.routeDef || CORRIDOR_ROUTES['BH 67 STS'];
+  const activeTrailerObj = activeItem?.trailer || trailers[0];
+  const activeLifecycle = activeItem?.lifecycle || 'in_transit';
+
+  // Full Screen Portal
   if (isFullScreen && typeof document !== 'undefined') {
     return (
       <>
         <div className={`${heightClass} w-full rounded-[22px] bg-slate-900/40 border border-white/10`} />
         {createPortal(
-          <div className="fixed inset-0 z-[99999] w-screen h-screen bg-[#070b14] flex flex-col overflow-hidden">
-            {/* Compact Full Screen Top Bar — X pinned in top-right corner */}
+          <div className="fixed inset-0 z-[99999] w-screen h-screen h-[100dvh] bg-[#070b14] flex flex-col overflow-hidden">
             <div
               className="px-4 py-2.5 border-b border-white/15 flex flex-nowrap items-center justify-between gap-3 shrink-0"
-              style={{ backgroundColor: '#0f172a', color: '#ffffff' }}
+              style={{
+                backgroundColor: '#0f172a',
+                color: '#ffffff',
+                paddingTop: 'max(0.625rem, env(safe-area-inset-top, 0px))',
+              }}
             >
               <div className="min-w-0 flex-1 flex flex-nowrap items-center justify-between gap-3 overflow-x-auto no-scrollbar">
                 <div className="flex flex-nowrap items-center gap-2.5 shrink-0">
                   <span className="inline-flex items-center gap-1.5 text-xs font-extrabold text-[#4ade80] whitespace-nowrap">
-                    <Radio className="w-3.5 h-3.5 animate-pulse shrink-0" />
+                    <Radio className="w-3.5 h-3.5 animate-pulse shrink-0" aria-hidden="true" />
                     {activeRouteDef.tripCode}
                   </span>
                   <span className="text-xs font-bold text-white truncate max-w-[320px] sm:max-w-none">
@@ -1307,31 +1144,31 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                   </span>
                 </div>
 
-                {!singleTripMode && trailers.length > 1 && (
+                {!isSingle && currentScopeItems.length > 1 && (
                   <div className="flex flex-nowrap items-center gap-1 shrink-0">
                     <button
                       type="button"
                       onClick={() => handleFocusCorridor('ALL')}
-                      className={`px-3 py-1 rounded-full text-[11px] font-bold cursor-pointer whitespace-nowrap transition ${
-                        focusedTrailerId === 'ALL'
+                      className={`px-3 py-1 rounded-full text-[11px] font-bold cursor-pointer whitespace-nowrap ${
+                        focusedMapId === 'ALL'
                           ? 'bg-[#0A84FF] text-white'
                           : 'bg-slate-800 text-slate-300 hover:text-white'
                       }`}
                     >
-                      Toate ({trailers.length})
+                      Toate ({currentScopeItems.length})
                     </button>
-                    {trailers.map((t) => (
+                    {currentScopeItems.map((it) => (
                       <button
-                        key={t.id}
+                        key={it.mapId}
                         type="button"
-                        onClick={() => handleFocusCorridor(t.id)}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold cursor-pointer whitespace-nowrap transition ${
-                          focusedTrailerId === t.id
+                        onClick={() => handleFocusCorridor(it.mapId)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold cursor-pointer whitespace-nowrap ${
+                          focusedMapId === it.mapId
                             ? 'bg-[#0A84FF] text-white'
                             : 'bg-slate-800 text-slate-300 hover:text-white'
                         }`}
                       >
-                        {t.id}
+                        {it.trailer.id}
                       </button>
                     ))}
                   </div>
@@ -1342,16 +1179,24 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                 type="button"
                 onClick={() => setIsFullScreen(false)}
                 aria-label="Închide harta pe tot ecranul"
-                title="Închide ecran complet (Esc)"
-                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-white flex items-center justify-center cursor-pointer shrink-0 transition"
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-white flex items-center justify-center cursor-pointer shrink-0"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
 
-            {/* 100% Full-Bleed Map Container */}
-            <div className="relative flex-1 w-full h-full overflow-hidden">
+            <div
+              ref={mapHostWrapperRef}
+              className="relative flex-1 w-full h-full overflow-hidden"
+            >
               <div ref={mapContainerRef} className="w-full h-full z-0" />
+              {showWeatherRadar && (
+                <canvas
+                  ref={weatherCanvasRef}
+                  aria-hidden="true"
+                  className="absolute inset-0 w-full h-full pointer-events-none z-[320]"
+                />
+              )}
               {renderMapControlsBar()}
             </div>
           </div>,
@@ -1369,24 +1214,21 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           : 'tahoe-glass rounded-[28px] p-4 sm:p-5 space-y-4'
       }
     >
-      {/* Layout: Side-by-Side in Control Center (!singleTripMode), Stacked Dedesubt (flex-col) in Detalii Cursă (singleTripMode) */}
-      <div
-        className={
-          singleTripMode
-            ? 'flex flex-col gap-3.5'
-            : 'flex flex-col xl:flex-row gap-3.5 items-stretch flex-1'
-        }
-      >
-        {/* Interactive Leaflet Map Container (Accidental scroll/trackpad zoom strictly locked) */}
+      <div className="flex flex-col gap-3.5">
+        {/* ROW 1: Full-Width Interactive Leaflet Map Container */}
         <div
-          className={`w-full shrink-0 min-w-0 relative rounded-[22px] overflow-hidden border border-white/15 shadow-2xl transition ${
+          ref={mapHostWrapperRef}
+          className={`w-full shrink-0 min-w-0 relative rounded-[22px] overflow-hidden border border-white/15 shadow-2xl ${
             singleTripMode
-              ? 'h-[320px] sm:h-[340px]'
-              : 'xl:flex-1 h-[380px] sm:h-[480px] xl:h-[480px]'
+              ? 'h-[300px] sm:h-[340px]'
+              : 'h-[370px] sm:h-[470px] lg:h-[500px]'
           }`}
           style={{
-            height: singleTripMode ? '320px' : '480px',
-            minHeight: singleTripMode ? '320px' : '380px',
+            minHeight: singleTripMode ? '300px' : '370px',
+            contentVisibility: 'auto',
+            containIntrinsicSize: singleTripMode
+              ? 'auto none auto 340px'
+              : 'auto none auto 500px',
           }}
         >
           <div
@@ -1394,108 +1236,202 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
             className="w-full h-full z-0"
             style={{
               height: '100%',
-              minHeight: singleTripMode ? '320px' : '380px',
+              minHeight: singleTripMode ? '300px' : '370px',
             }}
           />
+
+          {showWeatherRadar && (
+            <canvas
+              ref={weatherCanvasRef}
+              aria-hidden="true"
+              className="absolute inset-0 w-full h-full pointer-events-none z-[320]"
+            />
+          )}
 
           {renderMapControlsBar()}
 
           {/* Compact Bottom-Left Highway Corridor Pill */}
           <div
-            className="absolute bottom-3 left-3 z-[400] px-3 py-1.5 rounded-full backdrop-blur-md border border-white/20 flex flex-wrap items-center gap-2.5 text-[11px] shadow-lg"
+            className="absolute bottom-3 left-3 z-[400] px-3 py-1.5 rounded-full backdrop-blur-md border border-white/20 inline-flex items-center gap-1.5 text-[11px] font-semibold shadow-lg pointer-events-none select-none"
             style={{
               backgroundColor: 'rgba(15, 23, 42, 0.92)',
               color: '#ffffff',
             }}
           >
-            <span className="flex items-center gap-1.5 font-semibold" style={{ color: '#ffffff' }}>
-              <span className="w-2.5 h-2.5 rounded-full bg-[#38bdf8]" />
-              Traseu Rutier Camioane (OSRM HGV)
-            </span>
-            <span className="flex items-center gap-1 font-semibold" style={{ color: '#fbbf24' }}>
-              Autohof Swap
-            </span>
-            <button
-              type="button"
-              onClick={toggleScrollZoom}
-              className="px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 font-bold cursor-pointer"
-              style={{
-                color: isScrollZoomActive ? '#4ade80' : '#cbd5e1',
-              }}
-              title="Deblochează / Blochează zoom din rotița mouse-ului"
-            >
-              {isScrollZoomActive ? '🔓 Zoom Scroll: ACTIV' : '🔒 Zoom Scroll: OPRIT'}
-            </button>
+            <span aria-hidden="true" className="w-2.5 h-2.5 rounded-full bg-[#38bdf8] shrink-0" />
+            <span style={{ color: '#ffffff' }}>Traseu Rutier Camioane</span>
           </div>
         </div>
 
-        {/* Active Trips Selector (Shown ONLY in Control Center when !singleTripMode, zero overlapping text) */}
+        {/* ROW 2: Two Side-by-Side Cards Below the Map (Trips Selector + Route Checkpoints) */}
+        <div
+          className={
+            singleTripMode
+              ? 'w-full'
+              : 'grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch'
+          }
+        >
+        {/* Trips Selector with Explicit Active / Trecute Separation */}
         {!singleTripMode && (
-          <div className="w-full xl:w-[275px] xl:h-[480px] shrink-0 tahoe-card-inner rounded-[22px] p-3 flex flex-col justify-between gap-2">
-            <button
-              onClick={() => handleFocusCorridor('ALL')}
-              className={`w-full px-3.5 py-2 rounded-full text-xs font-extrabold transition flex items-center justify-between cursor-pointer ${
-                focusedTrailerId === 'ALL'
-                  ? 'bg-[#0A84FF] text-white shadow-md'
-                  : 'bg-white/[0.06] text-white/75 hover:text-white border border-white/10'
-              }`}
+          <div className="w-full lg:col-span-5 max-h-[360px] lg:max-h-none lg:h-[430px] shrink-0 tahoe-card-inner rounded-[22px] p-3.5 flex flex-col gap-2">
+            {/* Segmented Filter: Active vs Trecute */}
+            <div
+              role="group"
+              aria-label="Filtru stare curse pe hartă"
+              className="grid grid-cols-2 gap-1 p-1 rounded-full bg-black/20 border border-white/10 shrink-0"
             >
-              <span>Toate Cursele ({trailers.length})</span>
-              <span className="text-[10px] font-bold opacity-85">Toată Flota</span>
-            </button>
+              <button
+                type="button"
+                aria-pressed={effectiveScope === 'active'}
+                onClick={() => setScope('active')}
+                className={`px-2.5 py-1.5 rounded-full text-[11px] font-extrabold flex items-center justify-center gap-1.5 cursor-pointer border ${
+                  effectiveScope === 'active'
+                    ? 'bg-[#0A84FF] text-white border-[#64D2FF]/50 shadow-xs'
+                    : 'border-transparent text-white/70 hover:text-white'
+                }`}
+              >
+                <Radio className="w-3 h-3 shrink-0" aria-hidden="true" />
+                <span>Active ({resolvedActiveTrips.length})</span>
+              </button>
 
-            <div className="flex flex-col gap-1.5 flex-1 justify-between">
-              {trailers.map((t) => {
-                const isSelected =
-                  focusedTrailerId === t.id ||
-                  (focusedTrailerId === 'ALL' && selectedTrackerId === t.id);
-                const trPlate = t.tractorId.split(' (')[0];
-                const isTwoPlates = Boolean(trPlate && trPlate !== t.id);
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => handleFocusCorridor(t.id)}
-                    className={`w-full px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center justify-between gap-1.5 cursor-pointer ${
-                      focusedTrailerId === t.id
-                        ? 'bg-[#0A84FF] text-white shadow-md'
-                        : isSelected
-                          ? 'bg-white/[0.14] text-white border border-white/25'
-                          : 'bg-white/[0.05] text-white/75 hover:text-white border border-white/10'
-                    }`}
-                  >
-                    <span className="inline-flex items-center gap-1 min-w-0">
-                      {isTwoPlates && (
-                        <>
-                          {renderEuroRoPlate(trPlate)}
-                          <span className="font-black text-[10px]">+</span>
-                        </>
-                      )}
-                      {renderEuroRoPlate(t.id)}
-                    </span>
-                    <span
-                      className={`text-[10px] font-extrabold tabular-nums px-2 py-0.5 rounded-full shrink-0 ${
-                        focusedTrailerId === t.id
-                          ? 'bg-white/20 text-white'
-                          : 'bg-[#30D158]/15 text-[#30D158]'
+              <button
+                type="button"
+                aria-pressed={effectiveScope === 'past'}
+                onClick={() => setScope('past')}
+                className={`px-2.5 py-1.5 rounded-full text-[11px] font-extrabold flex items-center justify-center gap-1.5 cursor-pointer border ${
+                  effectiveScope === 'past'
+                    ? 'bg-emerald-600 text-white border-emerald-300/50 shadow-xs'
+                    : 'border-transparent text-white/70 hover:text-white'
+                }`}
+              >
+                <CheckCircle2 className="w-3 h-3 shrink-0" aria-hidden="true" />
+                <span>Trecute ({resolvedPastTrips.length})</span>
+              </button>
+            </div>
+
+            {currentScopeItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => handleFocusCorridor('ALL')}
+                className={`w-full px-3.5 py-1.5 rounded-full text-xs font-extrabold flex items-center justify-between cursor-pointer shrink-0 border ${
+                  focusedMapId === 'ALL'
+                    ? 'bg-[#0A84FF] text-white border-transparent shadow-md'
+                    : 'bg-white/[0.06] text-white/75 hover:text-white border-white/10'
+                }`}
+              >
+                <span>
+                  {effectiveScope === 'past'
+                    ? `Toate Trecute (${currentScopeItems.length})`
+                    : `Toate Active (${currentScopeItems.length})`}
+                </span>
+                <span className="text-[10px] font-bold opacity-85">
+                  {effectiveScope === 'past' ? 'Istoric' : 'Pe hartă'}
+                </span>
+              </button>
+            )}
+
+            <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto pr-0.5 min-h-0">
+              {currentScopeItems.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center text-center px-3 py-6 text-xs text-white/60">
+                  Nu există curse în această categorie.
+                </div>
+              ) : (
+                currentScopeItems.map((item) => {
+                  const t = item.trailer;
+                  const isSelected =
+                    focusedMapId === item.mapId ||
+                    (focusedMapId === 'ALL' && selectedTrackerId === item.mapId);
+                  const trPlate = t.tractorId.split(' (')[0];
+                  const isTwoPlates = Boolean(trPlate && trPlate !== t.id);
+                  const isFocused = focusedMapId === item.mapId;
+                  const showSubRoute =
+                    item.lifecycle !== 'in_transit' || Boolean(item.sourceCardId);
+
+                  return (
+                    <button
+                      key={item.mapId}
+                      type="button"
+                      onClick={() => handleFocusCorridor(item.mapId)}
+                      className={`w-full px-3 py-1.5 rounded-2xl text-xs font-semibold flex flex-col gap-1 text-left cursor-pointer shrink-0 border ${
+                        isFocused
+                          ? 'bg-[#0A84FF] text-white border-transparent shadow-md'
+                          : isSelected
+                            ? 'bg-white/[0.14] text-white border-white/25'
+                            : 'bg-white/[0.05] text-white/75 hover:text-white border-white/10'
                       }`}
                     >
-                      {t.freeLdm.toFixed(1)} LDM
-                    </span>
-                  </button>
-                );
-              })}
+                      <div className="w-full flex items-center justify-between gap-1.5">
+                        <span className="inline-flex items-center gap-1 min-w-0">
+                          {isTwoPlates && (
+                            <>
+                              {renderEuroRoPlate(trPlate)}
+                              <span className="font-black text-[10px]">+</span>
+                            </>
+                          )}
+                          {renderEuroRoPlate(t.id)}
+                        </span>
+
+                        {item.lifecycle === 'past' ? (
+                          <span
+                            className={`text-[10px] font-extrabold tabular-nums px-2 py-0.5 rounded-full shrink-0 inline-flex items-center gap-1 ${
+                              isFocused
+                                ? 'bg-white/20 text-white'
+                                : 'bg-emerald-500/20 text-emerald-400'
+                            }`}
+                          >
+                            <CheckCircle2 className="w-2.5 h-2.5" aria-hidden="true" />
+                            <span>{item.shortTimeBadge}</span>
+                          </span>
+                        ) : item.lifecycle === 'planned' ? (
+                          <span
+                            className={`text-[10px] font-extrabold tabular-nums px-2 py-0.5 rounded-full shrink-0 inline-flex items-center gap-1 ${
+                              isFocused
+                                ? 'bg-white/20 text-white'
+                                : 'bg-amber-500/20 text-amber-400'
+                            }`}
+                          >
+                            <Clock className="w-2.5 h-2.5" aria-hidden="true" />
+                            <span>{item.shortTimeBadge}</span>
+                          </span>
+                        ) : (
+                          <span
+                            className={`text-[10px] font-extrabold tabular-nums px-2 py-0.5 rounded-full shrink-0 ${
+                              isFocused
+                                ? 'bg-white/20 text-white'
+                                : 'bg-[#30D158]/15 text-[#30D158]'
+                            }`}
+                          >
+                            {t.freeLdm.toFixed(1)} LDM
+                          </span>
+                        )}
+                      </div>
+
+                      {showSubRoute && (
+                        <div
+                          className={`text-[10px] font-semibold truncate w-full ${
+                            isFocused ? 'text-white/90' : 'text-white/60'
+                          }`}
+                        >
+                          {item.clientLabel ? `${item.clientLabel} · ` : ''}
+                          {item.routeSummaryText}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
         )}
 
-        {/* Checkpoint Tracker Card + Technical KM + Compact Apple Weather Icons (Underneath map in singleTripMode) */}
+        {/* Checkpoint Tracker Card + Technical KM */}
         <div
           className={`w-full ${
-            singleTripMode ? '' : 'xl:w-[340px] xl:h-[480px]'
-          } shrink-0 tahoe-card-inner rounded-[22px] p-4 flex flex-col justify-between space-y-3`}
+            singleTripMode ? '' : 'lg:col-span-7 lg:h-[430px]'
+          } shrink-0 tahoe-card-inner rounded-[22px] px-4 py-4 flex flex-col justify-between space-y-3 overflow-y-auto`}
         >
           <div className="space-y-2.5">
-            <div className="flex items-center justify-between border-b border-white/[0.08] pb-2.5">
+            <div className="flex items-start justify-between gap-2 border-b border-white/[0.08] pb-2.5">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-base font-bold text-white tabular-nums mr-1">
@@ -1518,35 +1454,68 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                   })()}
                 </div>
                 <div className="text-[11px] text-white/65 mt-1 font-medium truncate">
-                  {activeTrailerObj.tractorId.split(' (')[1]?.replace(')', '') || activeTrailerObj.tractorId} · Șofer: <strong className="text-white">{activeTrailerObj.driver1.name}</strong>
+                  Șofer: <strong className="text-white">{activeTrailerObj.driver1.name}</strong>
+                  {activeItem?.clientLabel ? ` · ${activeItem.clientLabel}` : ''}
                 </div>
                 <div className="text-[10px] tabular-nums text-[#30D158] mt-0.5 font-semibold truncate">
                   {activeRouteDef.highwayCorridor}
                 </div>
               </div>
 
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#30D158]/20 text-[#30D158] border border-[#30D158]/30 shrink-0">
-                {activeTrailerObj.status}
-              </span>
+              {activeLifecycle === 'past' ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/35 shrink-0 inline-flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" aria-hidden="true" />
+                  <span>Trecută</span>
+                </span>
+              ) : activeLifecycle === 'planned' ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/35 shrink-0 inline-flex items-center gap-1">
+                  <Clock className="w-3 h-3" aria-hidden="true" />
+                  <span>Planificată</span>
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#30D158]/20 text-[#30D158] border border-[#30D158]/30 shrink-0">
+                  În tranzit
+                </span>
+              )}
             </div>
 
-            {/* Technical Distance (KM) & Transit Period Summary Box (Non-Wrapping, Clean) */}
+            {/* Technical Distance & Transit Period Summary Box */}
             <div className="rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2 space-y-1">
-              <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums whitespace-nowrap">
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] tabular-nums">
                 <span className="font-bold text-white">
-                  Total: <span className="text-[#0A84FF] font-extrabold">{activeRouteDef.totalTechKm.toLocaleString('ro-RO')} km</span>
+                  Total:{' '}
+                  <span className="text-[#0A84FF] font-extrabold">
+                    {activeRouteDef.totalTechKm.toLocaleString('ro-RO')} km
+                  </span>
                 </span>
                 <span className="text-white/75 font-semibold">
-                  Rămas: <strong className="text-white">{(activeRouteDef.totalTechKm - activeRouteDef.drivenKm).toLocaleString('ro-RO')} km</strong> ({activeRouteDef.estDriveHours})
+                  {activeLifecycle === 'past' ? (
+                    <strong className="text-emerald-400">Livrat 100% ✓</strong>
+                  ) : (
+                    <>
+                      Rămas:{' '}
+                      <strong className="text-white">
+                        {(activeRouteDef.totalTechKm - activeRouteDef.drivenKm).toLocaleString(
+                          'ro-RO'
+                        )}{' '}
+                        km
+                      </strong>{' '}
+                      ({activeRouteDef.estDriveHours})
+                    </>
+                  )}
                 </span>
               </div>
-              <div className="text-[10px] text-white/60 tabular-nums flex items-center justify-between gap-2 whitespace-nowrap">
-                <span>Tranzit: <strong>{activeRouteDef.transitWindow}</strong></span>
-                <span className="text-[#30D158] font-bold">Parcurs: {activeRouteDef.drivenKm} km</span>
+              <div className="text-[10px] text-white/60 tabular-nums flex items-center justify-between gap-2 min-w-0">
+                <span className="truncate min-w-0">
+                  Program: <strong>{activeRouteDef.transitWindow}</strong>
+                </span>
+                <span className="text-[#30D158] font-bold shrink-0">
+                  Parcurs: {activeRouteDef.drivenKm.toLocaleString('ro-RO')} km
+                </span>
               </div>
             </div>
 
-            {/* Route Checkpoints with Compact Apple Weather Icon + Temp (Zero Text Truncation) */}
+            {/* Route Checkpoints */}
             <div
               className={
                 singleTripMode
@@ -1557,21 +1526,21 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
               {activeRouteDef.checkpoints.map((cp, idx) => (
                 <div
                   key={idx}
-                  className={`flex items-center justify-between gap-2 text-xs ${
+                  className={`flex items-center justify-between gap-2.5 text-xs ${
                     singleTripMode
                       ? 'p-2 rounded-xl bg-white/[0.03] border border-white/10'
                       : 'py-0.5'
                   }`}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
                     {cp.completed ? (
-                      <CheckCircle2 className="w-4 h-4 text-[#30D158] shrink-0" />
+                      <CheckCircle2 className="w-4 h-4 text-[#30D158] shrink-0" aria-hidden="true" />
                     ) : cp.current ? (
-                      <CircleDot className="w-4 h-4 text-[#0A84FF] animate-pulse shrink-0" />
+                      <CircleDot className="w-4 h-4 text-[#0A84FF] animate-pulse shrink-0" aria-hidden="true" />
                     ) : (
-                      <div className="w-4 h-4 rounded-full border border-white/25 shrink-0" />
+                      <div className="w-4 h-4 rounded-full border border-white/25 shrink-0" aria-hidden="true" />
                     )}
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div
                         className={`font-semibold text-[11.5px] truncate ${
                           cp.completed || cp.current ? 'text-white' : 'text-white/70'
@@ -1579,20 +1548,21 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                       >
                         {cp.city} ({formatCountryBadge(cp.country)})
                       </div>
-                      <div className="text-[10px] text-white/60 tabular-nums whitespace-nowrap">
+                      <div className="text-[10px] text-white/60 tabular-nums truncate">
                         {cp.eta.split(' (')[0]} ·{' '}
                         <strong className="text-[#0A84FF]">
-                          {cp.techKm.replace(/\(\+(\d+)\s*km\)/, '(etapă $1 km)')}
+                          {singleTripMode
+                            ? cp.techKm.replace(/\(\+(\d+)\s*km\)/, '(etapă $1 km)')
+                            : cp.techKm}
                         </strong>
                       </div>
                     </div>
                   </div>
 
-                  {/* Compact Apple Weather Icon + Temp + Free LDM (No Long Text) */}
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <div
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-white/[0.06] border border-white/10"
-                      title={`Vreme la tranzit: ${cp.tempC}°C (${cp.weatherDesc})`}
+                      className="inline-flex items-center gap-1 shrink-0"
+                      aria-label={`Vreme la tranzit: ${cp.tempC > 0 ? `+${cp.tempC}` : cp.tempC}°C, ${cp.weatherDesc}`}
                     >
                       {renderAppleWeatherIcon(cp.weatherType)}
                       <span className="text-[10.5px] font-extrabold text-white tabular-nums">
@@ -1619,11 +1589,15 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           <div className="pt-3 border-t border-white/[0.08] space-y-2.5">
             <div className="flex items-center justify-between text-xs">
               <span className="text-white/55 flex items-center gap-1">
-                <Navigation className="w-3.5 h-3.5 text-[#0A84FF]" />
-                {activeTrailerObj.currentLocation.speedKmh} km/h
+                <Navigation className="w-3.5 h-3.5 text-[#0A84FF]" aria-hidden="true" />
+                {activeLifecycle === 'past'
+                  ? 'Cursă finalizată'
+                  : activeLifecycle === 'planned'
+                    ? `Plecare ${activeItem?.shortTimeBadge || ''}`
+                    : `${activeTrailerObj.currentLocation.speedKmh} km/h`}
               </span>
               <span className="text-[#64D2FF] tabular-nums text-xs flex items-center gap-1">
-                <ThermometerSnowflake className="w-3.5 h-3.5" />
+                <ThermometerSnowflake className="w-3.5 h-3.5" aria-hidden="true" />
                 {activeTrailerObj.zone1Temp}°C / +{activeTrailerObj.zone2Temp}°C
               </span>
             </div>
@@ -1632,24 +1606,27 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 {onSelectTrailer && (
                   <button
+                    type="button"
                     onClick={() => onSelectTrailer(activeTrailerObj.id)}
                     className="py-2 px-3 rounded-full tahoe-btn-primary text-[11px] font-semibold cursor-pointer"
                   >
-                    Detalii Bi-Temp →
+                    Vezi în Planificare →
                   </button>
                 )}
                 {onNavigateSwap && (
                   <button
+                    type="button"
                     onClick={onNavigateSwap}
                     className="py-2 px-3 rounded-full tahoe-btn-secondary text-[11px] font-semibold text-[#FF9F0A] flex items-center justify-center gap-1 cursor-pointer"
                   >
-                    <Repeat className="w-3 h-3" />
+                    <Repeat className="w-3 h-3" aria-hidden="true" />
                     <span>3 Puncte Swap</span>
                   </button>
                 )}
               </div>
             )}
           </div>
+        </div>
         </div>
       </div>
     </div>

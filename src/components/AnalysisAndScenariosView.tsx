@@ -22,7 +22,7 @@ export const AnalysisAndScenariosView: React.FC = () => {
           Analiza Funcționalităților, Reguli Operaționale, Prioritizare MVP și Scenarii Reale de Testare
         </h1>
         <p className="text-sm text-slate-300 mt-1">
-          Obiectiv dublu: (1) Creșterea eficienței și rentabilității flotei frigorifice Blue Trans și (2) Construcția fundației pentru produsul comercial SaaS „SFERLE TMS PRO”.
+          Obiectiv: Creșterea eficienței și rentabilității flotei frigorifice Blue Trans Spedition.
         </p>
       </div>
 

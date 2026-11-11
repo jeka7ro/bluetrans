@@ -19,6 +19,8 @@ import {
   Send,
   UserCheck,
   Sliders,
+  Copy,
+  Check,
 } from 'lucide-react';
 import {
   TrailerUnit,
@@ -29,6 +31,7 @@ import { EuropeLiveMap } from './EuropeLiveMap';
 import { FLEET_VIN_DATABASE } from './FleetVinAndDossierModal';
 import { VehiclePdfViewerModal } from './VehiclePdfViewerModal';
 import { getVehiclePdfDocs, useFleetPdfCatalog } from '../data/fleetDocuments';
+import { buildDriverPortalUrl } from '../data/authClient';
 
 interface DriverPortalViewProps {
   trailers: TrailerUnit[];
@@ -236,6 +239,7 @@ export const DriverPortalView: React.FC<DriverPortalViewProps> = ({
   ]);
   const [newMessageText, setNewMessageText] = useState('');
   const [statusToast, setStatusToast] = useState<string | null>(null);
+  const [copiedDriverLink, setCopiedDriverLink] = useState(false);
   const [driverPdfTarget, setDriverPdfTarget] = useState<{
     plate: string;
     vin?: string;
@@ -326,24 +330,60 @@ export const DriverPortalView: React.FC<DriverPortalViewProps> = ({
           </h1>
         </div>
 
-        {/* Selector Camion / Șofer (pentru testarea fiecărui șofer din flotă) */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
-          <div className="text-[11px] font-semibold text-white/60">
-            Schimbă cabina șoferului:
+        {/* Selector Camion / Șofer + Link direct cabină (vizibil în Supervizare și pe linkul general /sofer) */}
+        {!isStrictDriverRole && (
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+            <label
+              htmlFor="driver-portal-truck-select"
+              className="text-[11px] font-semibold text-white/60"
+            >
+              Cabină:
+            </label>
+            <select
+              id="driver-portal-truck-select"
+              name="driverCabSelect"
+              value={activeTrailer.id}
+              onChange={(e) => onSelectDriverTrailerId(e.target.value)}
+              className="px-4 py-2.5 rounded-full tahoe-card-inner text-white text-xs sm:text-sm font-bold border border-white/20 focus:outline-none focus:border-[#0A84FF] cursor-pointer"
+            >
+              {trailers.map((t) => (
+                <option key={t.id} value={t.id} className="bg-slate-900 text-white">
+                  {t.id} — {t.driver1.name} ({t.routeSummary[0]} →{' '}
+                  {t.routeSummary[t.routeSummary.length - 1]})
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(
+                    buildDriverPortalUrl(activeTrailer.id)
+                  );
+                  setCopiedDriverLink(true);
+                  setTimeout(() => setCopiedDriverLink(false), 2200);
+                } catch {
+                  // ignore clipboard error
+                }
+              }}
+              title={`Copiază linkul direct fără parolă pentru șoferul ${activeTrailer.id}`}
+              className="px-3.5 py-2.5 rounded-full tahoe-btn-secondary text-xs font-bold text-white inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+            >
+              {copiedDriverLink ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-[#30D158]" />
+                  <span>Link copiat</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-[#64D2FF]" />
+                  <span>Link șofer</span>
+                </>
+              )}
+            </button>
           </div>
-          <select
-            value={activeTrailer.id}
-            onChange={(e) => onSelectDriverTrailerId(e.target.value)}
-            className="px-4 py-2.5 rounded-full tahoe-card-inner text-white text-xs sm:text-sm font-bold border border-white/20 focus:outline-none focus:border-[#0A84FF] cursor-pointer"
-          >
-            {trailers.map((t) => (
-              <option key={t.id} value={t.id} className="bg-slate-900 text-white">
-                {t.id} — {t.driver1.name} ({t.routeSummary[0]} →{' '}
-                {t.routeSummary[t.routeSummary.length - 1]})
-              </option>
-            ))}
-          </select>
-        </div>
+        )}
       </div>
 
       {/* ROW 1: 4 Technical & Operational KPI Cards for the Driver */}

@@ -3,6 +3,8 @@ import path from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+// @ts-expect-error shared Node ESM auth handler
+import { handleAuthApiRequest, resolveDefaultAuthDbPath } from './authServer.mjs'
 
 interface ActeFlotaIndexEntry {
   fileName: string
@@ -190,6 +192,7 @@ function sendJson(
 
 function acteFlotaSyncPlugin(): Plugin {
   const dirPath = path.resolve(process.cwd(), 'public', 'acte-flota')
+  const authDbPath = resolveDefaultAuthDbPath(process.cwd())
 
   return {
     name: 'sferle-acte-flota-sync',
@@ -198,7 +201,11 @@ function acteFlotaSyncPlugin(): Plugin {
     },
     handleHotUpdate(ctx) {
       const norm = ctx.file.replace(/\\/g, '/')
-      if (norm.includes('/public/acte-flota/') || norm.includes('/.agents/')) {
+      if (
+        norm.includes('/public/acte-flota/') ||
+        norm.includes('/.agents/') ||
+        norm.includes('/.data/')
+      ) {
         return []
       }
     },
@@ -206,6 +213,10 @@ function acteFlotaSyncPlugin(): Plugin {
       syncActeFlotaIndexFile(dirPath)
 
       server.middlewares.use((req, res, next) => {
+        if (handleAuthApiRequest(req, res, authDbPath)) {
+          return
+        }
+
         const reqUrl = (req.url || '').split('?')[0]
 
         if (req.method === 'GET' && reqUrl === '/acte-flota/index.json') {
@@ -492,13 +503,58 @@ function acteFlotaSyncPlugin(): Plugin {
   }
 }
 
+function computeBuildMetadata(): {
+  version: string
+  buildDateRo: string
+  buildIso: string
+} {
+  let version = '1.1.0'
+  try {
+    const pkgRaw = fs.readFileSync(
+      path.resolve(process.cwd(), 'package.json'),
+      'utf8'
+    )
+    const pkg = JSON.parse(pkgRaw) as { version?: string }
+    if (pkg.version) version = pkg.version
+  } catch {
+    // fallback version
+  }
+
+  const now = new Date()
+  const parts = new Intl.DateTimeFormat('ro-RO', {
+    timeZone: 'Europe/Bucharest',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now)
+  const getPart = (type: string) =>
+    parts.find((p) => p.type === type)?.value || ''
+  const buildDateRo = `${getPart('day')}.${getPart('month')}.${getPart('year')} · ${getPart('hour')}:${getPart('minute')}`
+
+  return {
+    version,
+    buildDateRo,
+    buildIso: now.toISOString(),
+  }
+}
+
+const BUILD_META = computeBuildMetadata()
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(BUILD_META.version),
+    __APP_BUILD_DATE_RO__: JSON.stringify(BUILD_META.buildDateRo),
+    __APP_BUILD_ISO__: JSON.stringify(BUILD_META.buildIso),
+  },
   plugins: [react(), tailwindcss(), acteFlotaSyncPlugin()],
   server: {
     port: 3645,
     strictPort: true,
     watch: {
-      ignored: ['**/public/acte-flota/**', '**/.agents/**'],
+      ignored: ['**/public/acte-flota/**', '**/.agents/**', '**/.data/**'],
     },
   },
 })

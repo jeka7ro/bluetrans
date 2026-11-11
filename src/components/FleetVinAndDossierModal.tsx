@@ -6639,13 +6639,21 @@ const FLEET_DOC_TITLES: Record<FleetDocType, string> = {
   LEASING: 'Credit / Leasing',
 };
 
+export interface FleetBoardExternalFilter {
+  filterKind?: 'all' | 'expiring';
+  searchQuery?: string;
+  sortBy?: 'default' | 'rca';
+  nonce: number;
+}
+
 export const MasinileMeleFleetBoard: React.FC<{
   onOpenVehicleDossier: (
     trailerId: string,
     initialTab: 'tractor' | 'trailer' | 'coupled' | 'edit',
     customItem?: MasinileMeleItem
   ) => void;
-}> = ({ onOpenVehicleDossier }) => {
+  externalFilter?: FleetBoardExternalFilter | null;
+}> = ({ onOpenVehicleDossier, externalFilter }) => {
   const pdfCatalog = useFleetPdfCatalog();
   const [pdfModalTarget, setPdfModalTarget] = useState<{
     plate: string;
@@ -6679,12 +6687,23 @@ export const MasinileMeleFleetBoard: React.FC<{
     };
   }, []);
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'default' | 'rca' | 'plate' | 'year'>('default');
+  const [searchQuery, setSearchQuery] = useState(
+    () => externalFilter?.searchQuery ?? ''
+  );
+  const [sortBy, setSortBy] = useState<'default' | 'rca' | 'plate' | 'year'>(
+    () => externalFilter?.sortBy ?? 'default'
+  );
   const [filterKind, setFilterKind] = useState<
     'all' | 'tractor' | 'semitrailer' | 'car' | 'with_pdf' | 'expiring'
-  >('all');
+  >(() => externalFilter?.filterKind ?? 'all');
   const [compactMode, setCompactMode] = useState(false);
+
+  useEffect(() => {
+    if (!externalFilter) return;
+    setFilterKind(externalFilter.filterKind ?? 'all');
+    setSearchQuery(externalFilter.searchQuery ?? '');
+    setSortBy(externalFilter.sortBy ?? 'default');
+  }, [externalFilter?.nonce]);
 
   // Mod de afișare: Carduri / Listă (tabel clasic macOS Tahoe) + rânduri pe pagină
   type ListSortKey = 'default' | 'plate' | 'kind' | 'year' | 'rca' | 'casco' | 'cmr';
@@ -6821,8 +6840,14 @@ export const MasinileMeleFleetBoard: React.FC<{
         return false;
       }
       if (filterKind === 'expiring') {
-        const rcaDaysLeft = getFleetCellInfo(item, 'RCA').days;
-        if (rcaDaysLeft === null || rcaDaysLeft > 14) return false;
+        if (item.fleetStatus === 'VANDUTA' || item.fleetStatus === 'ARHIVA') {
+          return false;
+        }
+        const hasExpiringDoc = (['RCA', 'CASCO', 'CMR'] as const).some((doc) => {
+          const daysLeft = getFleetCellInfo(item, doc).days;
+          return daysLeft !== null && daysLeft <= 14;
+        });
+        if (!hasExpiringDoc) return false;
       }
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
@@ -6862,22 +6887,22 @@ export const MasinileMeleFleetBoard: React.FC<{
           e.stopPropagation();
           handleOpenDocModal(item, docType);
         }}
-        className="flex flex-col items-center justify-center gap-px py-1 px-1 text-center transition hover:brightness-105 cursor-pointer border-r border-white/15 last:border-r-0 min-w-0"
+        className="flex flex-col items-center justify-center gap-0.5 py-1.5 px-1.5 text-center transition hover:brightness-105 cursor-pointer border-r border-white/15 last:border-r-0 min-w-0"
         style={{ backgroundColor: info.color, color: '#ffffff' }}
         title={`Detalii ${FLEET_DOC_TITLES[docType]} — ${item.plate}`}
       >
-        <span className="text-[8px] font-bold tracking-wide opacity-95 leading-none" style={{ color: '#ffffff' }}>
+        <span className="text-[0.625rem] font-bold tracking-wide opacity-95 leading-[1.15]" style={{ color: '#ffffff' }}>
           {title}
         </span>
 
         {info.days !== null ? (
-          <div className="leading-none" style={{ color: '#ffffff' }}>
-            <span className="text-[14px] font-black tabular-nums">{info.days}</span>
-            <span className="text-[8px] font-bold opacity-95 ml-0.5">zile</span>
+          <div className="leading-[1.1]" style={{ color: '#ffffff' }}>
+            <span className="text-[1.1rem] font-black tabular-nums">{info.days}</span>
+            <span className="text-[0.625rem] font-bold opacity-95 ml-0.5">zile</span>
           </div>
         ) : (
           <div
-            className="text-[9px] font-extrabold leading-tight break-words max-w-full"
+            className="text-[0.7rem] font-extrabold leading-[1.15] break-words max-w-full"
             style={{ color: '#ffffff' }}
           >
             {info.label}
@@ -6885,7 +6910,7 @@ export const MasinileMeleFleetBoard: React.FC<{
         )}
 
         <div
-          className="text-[7.5px] font-semibold opacity-90 truncate max-w-full leading-none"
+          className="text-[0.5875rem] font-semibold opacity-90 truncate max-w-full leading-[1.15]"
           style={{ color: '#ffffff' }}
         >
           {info.sub || '\u00A0'}
@@ -7257,8 +7282,8 @@ export const MasinileMeleFleetBoard: React.FC<{
 
         {/* Search, Sort & Filter Toolbar — all controls capsule-rounded */}
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex-1 min-w-[240px]">
-            <Search className="w-4 h-4 text-white/50 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <div className="relative flex-1 min-w-full sm:min-w-[240px]">
+            <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
@@ -7275,7 +7300,7 @@ export const MasinileMeleFleetBoard: React.FC<{
                 e.target.value as 'default' | 'rca' | 'plate' | 'year'
               )
             }
-            className="tahoe-card-inner rounded-full px-4 py-2.5 text-xs font-bold text-white border border-white/15 cursor-pointer"
+            className="w-full sm:w-auto tahoe-card-inner rounded-full px-4 py-2.5 text-xs font-bold text-white border border-white/15 cursor-pointer"
           >
             <option value="default">⇅ Sortează după: Implicit</option>
             <option value="rca">⇅ Expirare RCA (Urgent → Lung)</option>
@@ -7296,7 +7321,7 @@ export const MasinileMeleFleetBoard: React.FC<{
                   | 'expiring'
               )
             }
-            className="tahoe-card-inner rounded-full px-4 py-2.5 text-xs font-bold text-white border border-white/15 cursor-pointer"
+            className="w-full sm:w-auto tahoe-card-inner rounded-full px-4 py-2.5 text-xs font-bold text-white border border-white/15 cursor-pointer"
           >
             <option value="all">Toate ({items.length})</option>
             <option value="tractor">Doar Capete Tractor</option>
@@ -7395,10 +7420,10 @@ export const MasinileMeleFleetBoard: React.FC<{
                 className="tahoe-card-inner rounded-2xl p-3 sm:p-3.5 border border-white/15 hover:border-[#0A84FF]/60 transition flex flex-col lg:flex-row lg:items-center justify-between gap-4 cursor-pointer group shadow-sm"
               >
                 {/* Left: 3/4 Truck or Semi-Trailer Studio Thumbnail + Plate, Brand & Year */}
-                <div className="flex items-center gap-4 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 min-w-0">
                   {!compactMode && (
                     <div
-                      className="w-[132px] h-[92px] rounded-2xl border border-slate-200/80 flex items-center justify-center p-1 shrink-0 shadow-xs group-hover:scale-[1.03] transition overflow-hidden"
+                      className="w-full h-[126px] sm:w-[132px] sm:h-[92px] rounded-2xl border border-slate-200/80 flex items-center justify-center p-1.5 sm:p-1 shrink-0 shadow-xs group-hover:scale-[1.03] transition overflow-hidden"
                       style={{ backgroundColor: '#ffffff' }}
                     >
                       {item.kind === 'semitrailer' ||
@@ -7534,9 +7559,9 @@ export const MasinileMeleFleetBoard: React.FC<{
                   </div>
                 </div>
 
-                {/* Right: 4-Column Status Block (RCA | CASCO | CMR | Leasing) */}
+                {/* Right: 4-Column Status Block (RCA | CASCO | CMR | Leasing) — +25% scaled */}
                 <div className="flex items-center shrink-0">
-                  <div className="grid grid-cols-4 rounded-2xl overflow-hidden shadow-sm border border-black/10 w-full sm:w-[235px] min-h-[44px]">
+                  <div className="grid grid-cols-4 rounded-[18px] overflow-hidden shadow-sm border border-black/10 w-full sm:w-[18.5rem] min-h-[3.5rem]">
                     {renderStatusCell(item, 'RCA', 'RCA')}
                     {renderStatusCell(item, 'CASCO', 'CASCO')}
                     {renderStatusCell(item, 'CMR', 'CMR')}

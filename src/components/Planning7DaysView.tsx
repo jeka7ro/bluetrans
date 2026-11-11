@@ -49,6 +49,11 @@ import {
 import { ClientDropdownSelect } from './ClientDropdownSelect';
 import { EuropeLiveMap } from './EuropeLiveMap';
 import {
+  buildSingleCardMapTrip,
+  getPlanningCardLifecycle,
+  resolveCityGeo,
+} from '../utils/planningRouteSync';
+import {
   CmrAndInvoiceModal,
   PrintableTripDocData,
 } from './CmrAndInvoiceModal';
@@ -83,6 +88,8 @@ export interface HourlyPlanningCard {
   completed?: boolean;
   revenueEur?: number;
   linkedLoadId?: string;
+  fromCoords?: [number, number];
+  toCoords?: [number, number];
 }
 
 export interface DirectTripPayload {
@@ -725,6 +732,33 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
   const [decisionOrderId, setDecisionOrderId] = useState<string | null>(null);
   const [lastCreatedCardId, setLastCreatedCardId] = useState<string | null>(null);
   const [qcError, setQcError] = useState<string | null>(null);
+  const [cardStatusFilter, setCardStatusFilter] = useState<
+    'all' | 'active' | 'past'
+  >('all');
+
+  const weekCardsAll = React.useMemo(
+    () => cards.filter((c) => (c.weekOffset ?? 0) === weekOffset),
+    [cards, weekOffset]
+  );
+
+  const weekFilterCounts = React.useMemo(() => {
+    let active = 0;
+    let past = 0;
+    for (const c of weekCardsAll) {
+      const life = getPlanningCardLifecycle(c, trailers, roClock.zdt);
+      if (life.lifecycle === 'past') past += 1;
+      else active += 1;
+    }
+    return { all: weekCardsAll.length, active, past };
+  }, [weekCardsAll, trailers, roClock.zdt]);
+
+  const matchesCardFilter = (card: HourlyPlanningCard): boolean => {
+    if (cardStatusFilter === 'all') return true;
+    const life = getPlanningCardLifecycle(card, trailers, roClock.zdt);
+    return cardStatusFilter === 'past'
+      ? life.lifecycle === 'past'
+      : life.lifecycle !== 'past';
+  };
 
   // Refresh Romania clock every 15s so past-hour cutoffs stay live without page reload
   useEffect(() => {
@@ -1120,6 +1154,9 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     const linkedLoadId = `LD-${stamp}`;
     const cardId = `card-${Date.now()}`;
 
+    const fromGeoResolved = resolveCityGeo(qcFrom);
+    const toGeoResolved = resolveCityGeo(qcTo);
+
     const created: HourlyPlanningCard = {
       id: cardId,
       weekOffset: quickCreateCell.weekOffset,
@@ -1139,6 +1176,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
       colorTheme: qcTheme,
       revenueEur: revNum,
       linkedLoadId,
+      fromCoords: fromGeoResolved.coords,
+      toCoords: toGeoResolved.coords,
     };
 
     setCards((prev) => [...prev, created]);
@@ -1156,7 +1195,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     setQuickCreateCell(null);
     setLastCreatedCardId(created.id);
     setToastMessage(
-      `Cursa "${created.clientName}" (${created.ldm} LDM · ${revNum} €) a fost salvată pe ${submitDayMeta.short} ${submitDayMeta.date} (${created.hourSlot}) pe ${created.trailerId} și sincronizată în Comenzi & curse!`
+      `Cursa "${created.clientName}" (${created.ldm} LDM · ${revNum} €) a fost salvată pe ${submitDayMeta.short} ${submitDayMeta.date} (${created.hourSlot}) pe ${created.trailerId} și sincronizată automat în Control Center și Comenzi & curse!`
     );
   };
 
@@ -1193,22 +1232,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     </span>
   );
 
-  // Render a single Shipment Card inside a cell (Taller & Wider Davide Chape style with Real OpenStreetMap Tile Background & Euro-RO License Plate)
+  // Render a single Shipment Card inside a cell (Sleek Dark Tahoe Glass & Clean Light Mode with Cartographic Texture & Euro-RO Plates)
   const renderCellCard = (card: HourlyPlanningCard) => {
-    const headerColors = {
-      blue: 'bg-[#0A84FF]/25 border-b-2 border-b-[#3b82f6]',
-      green: 'bg-[#30D158]/25 border-b-2 border-b-[#22c55e]',
-      amber: 'bg-[#FF9F0A]/25 border-b-2 border-b-[#f59e0b]',
-      purple: 'bg-[#BF5AF2]/25 border-b-2 border-b-[#a855f7]',
-    }[card.colorTheme];
-
-    const cardBorder = {
-      blue: 'border-[#3b82f6]/55',
-      green: 'border-[#22c55e]/55',
-      amber: 'border-[#f59e0b]/55',
-      purple: 'border-[#a855f7]/55',
-    }[card.colorTheme];
-
     // Pick authentic OpenStreetMap highway tile for each corridor (Vienna, Rotterdam, Munich, Frankfurt, Hamburg)
     const osmTileUrl = card.routeLabel.includes('Viena')
       ? 'https://tile.openstreetmap.org/8/139/88.png'
@@ -1230,11 +1255,15 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     const isTwoPlateAssembly = tractorPlate !== card.trailerId && tractorPlate !== '—';
 
     const isJustCreated = lastCreatedCardId === card.id;
+    const cardLife = getPlanningCardLifecycle(card, trailers, roClock.zdt);
+    const isPastCard = cardLife.lifecycle === 'past';
 
     return (
-      <div
+      <article
         key={card.id}
         data-card-id={card.id}
+        data-card-theme={card.colorTheme}
+        data-card-lifecycle={cardLife.lifecycle}
         draggable
         onDragStart={(e) => {
           e.stopPropagation();
@@ -1254,32 +1283,50 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
           setSelectedTrailerId(card.trailerId);
           setSelectedCardDetail(card);
         }}
-        className={`relative rounded-2xl border ${cardBorder} tahoe-card-inner shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing overflow-hidden select-none h-[196px] w-full flex flex-col ${
-          card.completed ? 'border-dashed border-2 border-[#3b82f6]' : ''
+        className={`planning-trip-card relative rounded-2xl cursor-grab active:cursor-grabbing overflow-hidden select-none h-[196px] w-full flex flex-col ${
+          isPastCard ? 'border-dashed border-2 opacity-80' : ''
         } ${isTruckHovered ? 'ring-2 ring-[#0A84FF] scale-[1.02]' : ''} ${
           isJustCreated ? 'ring-2 ring-[#30D158] shadow-lg shadow-[#30D158]/25' : ''
         }`}
       >
-        {/* Card Top Colored Header Strip — Fixed Height 36px & Full Client Name */}
-        <div
-          className={`relative z-10 px-2.5 h-[36px] shrink-0 flex items-center ${headerColors}`}
-          title={`${card.clientName} (${card.ldm.toFixed(1)} LDM · ${card.weightTons.toFixed(1)}T)`}
+        {/* Card Top Colored Header Strip — Fixed Height 36px, Full Client Name & Clear Lifecycle Badge */}
+        <header
+          className="planning-card-header relative z-10 px-2 h-[36px] shrink-0 flex items-center justify-between gap-1"
+          title={`${card.clientName} · ${cardLife.badgeLabel} (${card.ldm.toFixed(1)} LDM · ${card.weightTons.toFixed(1)}T)`}
         >
-          <div className="flex items-center gap-1.5 w-full min-w-0">
-            {card.completed && (
-              <CheckCircle2 className="w-3.5 h-3.5 text-[#0284c7] shrink-0" />
+          <div className="flex items-center gap-1.5 min-w-0">
+            {isPastCard ? (
+              <CheckCircle2 className="w-3.5 h-3.5 planning-card-icon shrink-0" aria-hidden="true" />
+            ) : (
+              <span className="planning-card-dot shrink-0" aria-hidden="true" />
             )}
-            <span className="text-[11.5px] font-extrabold text-white leading-[1.15] line-clamp-2 break-words">
+            <h3 className="planning-card-title text-[11px] font-extrabold leading-[1.15] line-clamp-2 break-words min-w-0">
               {card.clientName}
-            </span>
+            </h3>
           </div>
-        </div>
 
-        {/* Card Body with Real OpenStreetMap Cartographic Background (Uniform Fixed Row Heights) */}
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-tight shrink-0 leading-none border ${
+              isPastCard
+                ? 'bg-emerald-950/55 text-emerald-200 border-emerald-300/45'
+                : cardLife.lifecycle === 'planned'
+                  ? 'bg-amber-950/55 text-amber-200 border-amber-300/45'
+                  : 'bg-sky-950/55 text-sky-100 border-white/35'
+            }`}
+          >
+            {isPastCard
+              ? '✓ Trecută'
+              : cardLife.lifecycle === 'planned'
+                ? '◷ Plan'
+                : '● Activă'}
+          </span>
+        </header>
+
+        {/* Card Body with Theme-Adaptive Cartographic Background (Uniform Fixed Row Heights) */}
         <div className="relative z-10 p-2 text-[11px] flex-1 flex flex-col justify-between overflow-hidden">
-          {/* Real OpenStreetMap Tile Layer on Background */}
+          {/* OpenStreetMap Tile Layer on Background (Dark-filtered in Dark Mode, Natural in Light Mode) */}
           <div
-            className="absolute inset-0 pointer-events-none bg-cover bg-right opacity-50"
+            className="planning-card-map-tile absolute inset-0 pointer-events-none bg-cover bg-right"
             style={{
               backgroundImage: `url(${osmTileUrl})`,
               backgroundSize: '145%',
@@ -1291,24 +1338,19 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
 
           {/* Row 1: Cargo Spec (Fixed 26px height) + Explicit LDM & Tonnage Pills (Fixed 20px height) */}
           <div className="relative z-10 space-y-1">
-            <div className="text-white font-bold flex items-start gap-1 text-[10.5px] leading-[1.15] h-[26px] overflow-hidden">
-              <Layers className="w-3.5 h-3.5 text-[#0284c7] shrink-0 mt-0.5" />
+            <div className="planning-card-cargo font-semibold flex items-start gap-1 text-[10.5px] leading-[1.15] h-[26px] overflow-hidden">
+              <Layers className="w-3.5 h-3.5 planning-card-icon shrink-0 mt-0.5" />
               <span className="line-clamp-2 break-words">{card.cargoSpec}</span>
             </div>
             <div className="flex items-center justify-between gap-1.5 h-[20px]">
               <span
-                className="px-1.5 py-0.5 rounded-md font-extrabold tabular-nums text-[10px] leading-none shrink-0 shadow-2xs border border-slate-300/80"
-                style={{ backgroundColor: '#ffffff', color: '#0f172a' }}
+                className="planning-pill-ldm px-1.5 py-0.5 rounded-md font-extrabold tabular-nums text-[10px] leading-none shrink-0"
                 title="Metri liniari de podea ocupați în semiremorcă (din 13.6 LDM)"
               >
                 {card.ldm.toFixed(1)} LDM
               </span>
               <span
-                className="px-1.5 py-0.5 rounded-md font-extrabold tabular-nums text-[10px] leading-none shrink-0 shadow-2xs border border-orange-200/80"
-                style={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                  color: '#ea580c',
-                }}
+                className="planning-pill-tons px-1.5 py-0.5 rounded-md font-extrabold tabular-nums text-[10px] leading-none shrink-0"
                 title="Greutate brută partidă marfă (Tone)"
               >
                 {card.weightTons.toFixed(1)} T
@@ -1316,34 +1358,33 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
             </div>
           </div>
 
-          {/* Row 2: Full Route + Single-Line Magenta Distance + Temperature */}
-          <div className="relative z-10 pt-1 border-t border-white/15 space-y-0.5">
-            <div className="flex items-center gap-1 text-white font-extrabold text-[11px] leading-tight h-[16px]">
-              <MapPin className="w-3 h-3 text-[#0284c7] shrink-0" />
+          {/* Row 2: Full Route + High-Contrast Distance + Temperature */}
+          <div className="planning-card-divider relative z-10 pt-1 space-y-0.5">
+            <div className="planning-card-route flex items-center gap-1 font-extrabold text-[11px] leading-tight h-[16px]">
+              <MapPin className="w-3 h-3 planning-card-icon shrink-0" />
               <span className="truncate">{card.routeLabel}</span>
             </div>
-            <div className="flex items-center justify-between gap-0.5 whitespace-nowrap tabular-nums text-[9px] h-[16px]">
+            <div className="flex items-center justify-between gap-1 whitespace-nowrap tabular-nums text-[9.5px] h-[16px]">
               <span
-                className="font-extrabold truncate tracking-[-0.02em]"
-                style={{ color: '#d946ef' }}
+                className="planning-card-km font-bold truncate tracking-[-0.015em]"
                 title={card.kmDist}
               >
                 {card.kmDist}
               </span>
-              <span className="font-extrabold text-[#0284c7] flex items-center gap-0.5 shrink-0">
-                <ThermometerSnowflake className="w-3 h-3 text-[#0ea5e9]" />
+              <span className="planning-card-temp font-extrabold flex items-center gap-0.5 shrink-0">
+                <ThermometerSnowflake className="w-3 h-3 planning-card-icon" />
                 {card.tempCelsius > 0 ? `+${card.tempCelsius}` : card.tempCelsius}°C
               </span>
             </div>
           </div>
 
-          {/* Row 3: BOTH Authentic Euro-Romanian License Plates (`Cap Tractor + Remorcă`) on Single Line + Driver Name */}
-          <div className="relative z-10 pt-1 border-t border-white/15 space-y-1">
+          {/* Row 3: Footer with BOTH Authentic Euro-Romanian License Plates (`Cap Tractor + Remorcă`) + Driver Name */}
+          <footer className="planning-card-divider relative z-10 pt-1 space-y-1">
             <div className="flex items-center gap-0.5 whitespace-nowrap h-[17px]">
               {isTwoPlateAssembly && (
                 <>
                   {renderEuroRoPlate(tractorPlate, true)}
-                  <span className="text-[9px] font-black text-white/70 leading-none">
+                  <span className="planning-card-plus text-[9px] font-black leading-none">
                     +
                   </span>
                 </>
@@ -1351,13 +1392,13 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
               {renderEuroRoPlate(card.trailerId, true)}
             </div>
             <div className="flex items-center justify-between h-[18px]">
-              <span className="text-[10px] text-white font-extrabold truncate px-1.5 py-0.5 rounded-md bg-white/15 w-full">
+              <span className="planning-driver-chip text-[10px] font-bold truncate px-1.5 py-0.5 rounded-md w-full">
                 Șofer: {card.driverName}
               </span>
             </div>
-          </div>
+          </footer>
         </div>
-      </div>
+      </article>
     );
   };
 
@@ -1450,6 +1491,52 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {/* Segmented Filter: Toate | Active | Trecute */}
+                <div
+                  role="group"
+                  aria-label="Filtru stare curse în calendar"
+                  className="inline-flex items-center gap-1 p-1 rounded-full bg-black/20 border border-white/15"
+                >
+                  <button
+                    type="button"
+                    aria-pressed={cardStatusFilter === 'all'}
+                    onClick={() => setCardStatusFilter('all')}
+                    className={`px-3 py-1 rounded-full text-xs font-extrabold cursor-pointer border ${
+                      cardStatusFilter === 'all'
+                        ? 'bg-[#0A84FF] text-white border-[#64D2FF]/50 shadow-xs'
+                        : 'border-transparent text-white/70 hover:text-white'
+                    }`}
+                  >
+                    Toate ({weekFilterCounts.all})
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={cardStatusFilter === 'active'}
+                    onClick={() => setCardStatusFilter('active')}
+                    className={`px-3 py-1 rounded-full text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer border ${
+                      cardStatusFilter === 'active'
+                        ? 'bg-[#0A84FF] text-white border-[#64D2FF]/50 shadow-xs'
+                        : 'border-transparent text-white/70 hover:text-white'
+                    }`}
+                  >
+                    <Radio className="w-3 h-3 shrink-0" aria-hidden="true" />
+                    <span>Active ({weekFilterCounts.active})</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={cardStatusFilter === 'past'}
+                    onClick={() => setCardStatusFilter('past')}
+                    className={`px-3 py-1 rounded-full text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer border ${
+                      cardStatusFilter === 'past'
+                        ? 'bg-emerald-600 text-white border-emerald-300/50 shadow-xs'
+                        : 'border-transparent text-white/70 hover:text-white'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3 h-3 shrink-0" aria-hidden="true" />
+                    <span>Trecute ({weekFilterCounts.past})</span>
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => openQuickCreateModal()}
@@ -1497,7 +1584,10 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
             <div className="lg:hidden flex items-center gap-1.5 flex-nowrap overflow-x-auto no-scrollbar p-3 border-b border-white/10">
               {weekMeta.days.map((d, idx) => {
                 const dayCards = cards.filter(
-                  (c) => (c.weekOffset ?? 0) === weekOffset && c.dayIndex === idx
+                  (c) =>
+                    (c.weekOffset ?? 0) === weekOffset &&
+                    c.dayIndex === idx &&
+                    matchesCardFilter(c)
                 );
                 const totalLdm = dayCards.reduce((s, c) => s + c.ldm, 0);
                 return (
@@ -1544,7 +1634,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   (c) =>
                     (c.weekOffset ?? 0) === weekOffset &&
                     c.dayIndex === mobileDayIdx &&
-                    c.hourSlot === hour
+                    c.hourSlot === hour &&
+                    matchesCardFilter(c)
                 );
                 const isCellEmpty = cellCards.length === 0;
                 return (
@@ -1604,7 +1695,10 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   <tr className="border-b border-white/15 bg-white/[0.03]">
                     {weekMeta.days.map((day, dIdx) => {
                       const dayCards = cards.filter(
-                        (c) => (c.weekOffset ?? 0) === weekOffset && c.dayIndex === dIdx
+                        (c) =>
+                          (c.weekOffset ?? 0) === weekOffset &&
+                          c.dayIndex === dIdx &&
+                          matchesCardFilter(c)
                       );
                       const sumTons = dayCards.reduce(
                         (acc, c) => acc + c.weightTons,
@@ -1690,7 +1784,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                           (c) =>
                             (c.weekOffset ?? 0) === weekOffset &&
                             c.dayIndex === dIdx &&
-                            c.hourSlot === hour
+                            c.hourSlot === hour &&
+                            matchesCardFilter(c)
                         );
                         const isCellEmpty = cellCards.length === 0;
                         const isHovered = hoveredCellKey === cellKey;
@@ -2045,9 +2140,12 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
         const knownDetailTrailer = trailers.find(
           (t) => t.id === selectedCardDetail.trailerId
         );
-        const detailTrailer: TrailerUnit = knownDetailTrailer
-          ? knownDetailTrailer
-          : buildUnassignedTrailerFromCard(trailers[0], selectedCardDetail);
+        const detailMapTrip = buildSingleCardMapTrip(
+          selectedCardDetail,
+          trailers,
+          roClock.zdt
+        );
+        const detailTrailer: TrailerUnit = detailMapTrip.trailer;
         const detailTractorPlate =
           selectedCardDetail.tractorPlate ??
           detailTrailer.tractorId.split(' (')[0];
@@ -2083,6 +2181,22 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                         return `${detDay.label} (${detDay.date}) · Ora ${selectedCardDetail.hourSlot}`;
                       })()}
                     </span>
+                    {detailMapTrip.lifecycle === 'past' ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/35">
+                        <CheckCircle2 className="w-3 h-3 shrink-0" aria-hidden="true" />
+                        <span>Cursă trecută / finalizată</span>
+                      </span>
+                    ) : detailMapTrip.lifecycle === 'planned' ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-amber-500/20 text-amber-400 border border-amber-500/35">
+                        <Clock className="w-3 h-3 shrink-0" aria-hidden="true" />
+                        <span>Cursă activă (Planificată)</span>
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/40">
+                        <Radio className="w-3 h-3 shrink-0" aria-hidden="true" />
+                        <span>Cursă activă (În tranzit)</span>
+                      </span>
+                    )}
                   </div>
                   <h2 className="text-xl sm:text-2xl font-extrabold text-white mt-1.5 truncate">
                     {selectedCardDetail.clientName} — {selectedCardDetail.routeLabel}
@@ -2181,13 +2295,15 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                     <select
                       value={selectedCardDetail.trailerId}
                       onChange={(e) => {
-                        const newTr =
-                          trailers.find((t) => t.id === e.target.value) ||
-                          trailers[0];
-                        const updated = {
+                        const chosenId = e.target.value;
+                        const newTr = trailers.find((t) => t.id === chosenId);
+                        const updated: HourlyPlanningCard = {
                           ...selectedCardDetail,
-                          trailerId: newTr.id,
-                          driverName: newTr.driver1.name,
+                          trailerId: chosenId,
+                          driverName: newTr ? newTr.driver1.name : selectedCardDetail.driverName,
+                          tractorPlate: newTr
+                            ? newTr.tractorId.split(' (')[0]
+                            : selectedCardDetail.tractorPlate,
                         };
                         setSelectedCardDetail(updated);
                         setCards((prev) =>
@@ -2196,16 +2312,25 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                       }}
                       className="w-full tahoe-glass rounded-xl px-3 py-2 text-white font-bold border border-white/15"
                     >
-                      {trailers.map((t) => {
-                        const trPlate = t.tractorId.split(' (')[0];
-                        const pairLabel =
-                          trPlate !== t.id ? `${trPlate} + ${t.id}` : t.id;
-                        return (
-                          <option key={t.id} value={t.id} className="bg-slate-900 text-white">
-                            {pairLabel} — {t.driver1.name} ({t.freeLdm.toFixed(1)}m liberi)
+                      <optgroup label="Cu șofer și curse în plan">
+                        {trailers.map((t) => {
+                          const trPlate = t.tractorId.split(' (')[0];
+                          const pairLabel =
+                            trPlate !== t.id ? `${trPlate} + ${t.id}` : t.id;
+                          return (
+                            <option key={t.id} value={t.id} className="bg-slate-900 text-white">
+                              {pairLabel} — {t.driver1.name} ({t.freeLdm.toFixed(1)}m liberi)
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                      <optgroup label={`Vehicule disponibile din Flotă (${idleTrailers.length})`}>
+                        {idleTrailers.map((v) => (
+                          <option key={v.plate} value={v.plate} className="bg-slate-900 text-white">
+                            {v.plate} · {v.company}
                           </option>
-                        );
-                      })}
+                        ))}
+                      </optgroup>
                     </select>
                   </div>
 
@@ -2272,7 +2397,11 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                       TRASEUL COMPLET AL CURSEI ({detailTrailer.id}) & HARTA RUTIERĂ LIVE
                     </div>
                     <div className="text-sm font-bold text-white mt-0.5">
-                      Coridor: {detailTrailer.routeSummary.join(' → ')} · Liber actual:{' '}
+                      Coridor: {detailTrailer.routeSummary.join(' → ')} ·{' '}
+                      <span className="text-[#64D2FF]">
+                        {detailMapTrip.routeDef.totalTechKm.toLocaleString('ro-RO')} km
+                      </span>{' '}
+                      · Liber remorcă:{' '}
                       <span className="text-[#30D158]">
                         {detailTrailer.freeLdm.toFixed(1)} LDM
                       </span>
@@ -2287,18 +2416,13 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   )}
                 </div>
 
-                {/* Interactive Leaflet HGV Map for the Trip's Complete Route */}
-                {knownDetailTrailer ? (
-                  <EuropeLiveMap
-                    trailers={[detailTrailer]}
-                    singleTripMode
-                    heightClass="h-[260px] sm:h-[310px]"
-                  />
-                ) : (
-                  <div className="rounded-xl bg-white/[0.05] border border-white/10 px-4 py-5 text-sm text-white/75">
-                    Această remorcă nu are încă traseu GPS și șofer legate în sistem, deci nu afișăm harta și traseul. Cursa este planificată doar în calendar.
-                  </div>
-                )}
+                {/* Interactive Leaflet HGV Map for THIS Specific Trip's Complete Route */}
+                <EuropeLiveMap
+                  trailers={[detailTrailer]}
+                  singleTripItem={detailMapTrip}
+                  singleTripMode
+                  heightClass="h-[260px] sm:h-[310px]"
+                />
               </div>
 
               {/* Footer Actions */}
@@ -2321,8 +2445,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                     <CheckCircle2 className="w-4 h-4 text-[#30D158]" />
                     <span>
                       {selectedCardDetail.completed
-                        ? 'Marchează În Lucru'
-                        : 'Marchează Operat / Încărcat'}
+                        ? 'Reactivează (Mută în Active)'
+                        : 'Marchează Finalizată (Trecută)'}
                     </span>
                   </button>
 
@@ -2731,7 +2855,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                 <span className="text-white/70 font-semibold">
                   Distanță rutieră calculată:
                 </span>
-                <span className="font-extrabold text-[#d946ef]">
+                <span className="font-extrabold text-[#64D2FF]">
                   {buildRoadDistanceWithDetourLabel(qcFrom, qcTo, 0)}
                 </span>
               </div>

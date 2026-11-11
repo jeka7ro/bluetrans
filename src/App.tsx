@@ -4,7 +4,6 @@ import {
   CalendarRange,
   Truck,
   Package,
-  Search,
   Bell,
   MoreHorizontal,
   X,
@@ -13,6 +12,7 @@ import {
   LogOut,
   Navigation,
   ListChecks,
+  Users,
 } from 'lucide-react';
 import {
   INITIAL_TRAILERS,
@@ -44,6 +44,7 @@ import { SmartGroupageView } from './components/SmartGroupageView';
 import { TrailerSwapView } from './components/TrailerSwapView';
 import { ClientOffersView } from './components/ClientOffersView';
 import { TmsOperationsView } from './components/TmsOperationsView';
+import type { FleetBoardExternalFilter } from './components/FleetVinAndDossierModal';
 import {
   OrdersAndTripsView,
   INITIAL_ACTIVE_LOADS,
@@ -52,7 +53,17 @@ import {
 } from './components/OrdersAndTripsView';
 import { DriverPortalView } from './components/DriverPortalView';
 import { LoginView } from './components/LoginView';
+import { UsersAdminView } from './components/UsersAdminView';
 import { AuditLogModal, type AuditEntry } from './components/AuditLogModal';
+import {
+  AuthUserRecord,
+  apiListUsers,
+  apiLogoutSession,
+  apiVerifySession,
+  clearStoredAuthSession,
+  loadStoredAuthSession,
+  resolveDriverPortalRouteFromLocation,
+} from './data/authClient';
 import {
   applyAllocation,
   evaluateAllocation,
@@ -68,10 +79,21 @@ import {
   isPlanningSlotInPast,
 } from './utils/romaniaTime';
 
+declare const __APP_VERSION__: string;
+declare const __APP_BUILD_DATE_RO__: string;
+declare const __APP_BUILD_ISO__: string;
+
+const APP_VERSION =
+  typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.1.0';
+const APP_BUILD_DATE_RO =
+  typeof __APP_BUILD_DATE_RO__ !== 'undefined' ? __APP_BUILD_DATE_RO__ : '—';
+const APP_BUILD_ISO =
+  typeof __APP_BUILD_ISO__ !== 'undefined' ? __APP_BUILD_ISO__ : '';
+
 export type UserRoleType = 'ADMIN' | 'DISPECER' | 'FINANCIAR' | 'SOFER';
 
 const THEME_STORAGE_KEY = 'bluetrans_tms_theme';
-const SESSION_STORAGE_KEY = 'bluetrans_tms_auth_v1';
+const UI_TAB_STORAGE_KEY = 'bluetrans_tms_ui_tab_v2';
 const TRAILERS_STORAGE_KEY = 'bluetrans_trailers_state_v1';
 const UNASSIGNED_STORAGE_KEY = 'bluetrans_unassigned_orders_v1';
 const PROPOSALS_STORAGE_KEY = 'bluetrans_proposals_v1';
@@ -123,8 +145,10 @@ function usePersistentState<T>(
   return [state, setPersistentState];
 }
 
-interface PersistedSession {
+interface InitialUiAuthState {
   isAuthenticated: boolean;
+  authToken: string;
+  loggedUserId: string;
   activeTab: string;
   userRole: UserRoleType;
   loggedUserName: string;
@@ -132,41 +156,66 @@ interface PersistedSession {
   driverTrailerId: string;
 }
 
-function loadInitialSession(): PersistedSession {
-  try {
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed.isAuthenticated === 'boolean') {
-        const safeTab =
-          !parsed.activeTab
-            ? 'today'
-            : parsed.activeTab === 'analysis'
-              ? 'fleet'
-            : parsed.activeTab === 'live-tracking'
-              ? 'control'
-              : parsed.activeTab;
-        return {
-          isAuthenticated: parsed.isAuthenticated,
-          activeTab: safeTab,
-          userRole: parsed.userRole || 'ADMIN',
-          loggedUserName:
-            parsed.loggedUserName || 'Alexandru Ionescu (Administrator General)',
-          loggedUserEmail:
-            parsed.loggedUserEmail || 'admin@bluetrans.ro',
-          driverTrailerId: parsed.driverTrailerId || 'BH 67 STS',
-        };
-      }
+function normalizeTabForRole(rawTab: string | null | undefined, role: UserRoleType): string {
+  const cleaned =
+    !rawTab
+      ? ''
+      : rawTab === 'analysis'
+        ? 'fleet'
+        : rawTab === 'live-tracking'
+          ? 'control'
+          : rawTab;
+  if (role === 'SOFER') return 'driver';
+  if (role === 'FINANCIAR') {
+    if (cleaned === 'offers' || cleaned === 'orders' || cleaned === 'fleet' || cleaned === 'control') {
+      return cleaned;
     }
-  } catch {
-    // ignore storage errors
+    return 'fleet';
   }
+  if (cleaned === 'users' && role !== 'ADMIN') {
+    return 'control';
+  }
+  return cleaned || 'control';
+}
+
+function loadInitialSession(): InitialUiAuthState {
+  try {
+    // Elimină sesiunea veche neautentificată demo dacă exista în browser
+    localStorage.removeItem('bluetrans_tms_auth_v1');
+  } catch {
+    // ignore
+  }
+
+  const storedAuth = loadStoredAuthSession();
+  let savedTab = '';
+  try {
+    savedTab = localStorage.getItem(UI_TAB_STORAGE_KEY) || '';
+  } catch {
+    // ignore
+  }
+
+  if (storedAuth && storedAuth.token && storedAuth.user) {
+    const role = (storedAuth.user.role || 'ADMIN') as UserRoleType;
+    return {
+      isAuthenticated: true,
+      authToken: storedAuth.token,
+      loggedUserId: storedAuth.user.id || '',
+      activeTab: normalizeTabForRole(savedTab, role),
+      userRole: role,
+      loggedUserName: storedAuth.user.name || 'Administrator',
+      loggedUserEmail: storedAuth.user.email || 'admin@bluetrans.ro',
+      driverTrailerId: storedAuth.user.driverTrailerId || 'BH 67 STS',
+    };
+  }
+
   return {
     isAuthenticated: false,
+    authToken: '',
+    loggedUserId: '',
     activeTab: 'today',
     userRole: 'ADMIN',
-    loggedUserName: 'Alexandru Ionescu (Administrator General)',
-    loggedUserEmail: 'admin@bluetrans.ro',
+    loggedUserName: '',
+    loggedUserEmail: '',
     driverTrailerId: 'BH 67 STS',
   };
 }
@@ -176,6 +225,13 @@ export function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
     initialSession.isAuthenticated
   );
+  const [authToken, setAuthToken] = useState<string>(initialSession.authToken);
+  const [loggedUserId, setLoggedUserId] = useState<string>(initialSession.loggedUserId);
+  const [pendingInvitesCount, setPendingInvitesCount] = useState<number>(0);
+  const [hasInviteQuery, setHasInviteQuery] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
+  });
   const [activeTab, setActiveTab] = useState<string>(initialSession.activeTab);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     try {
@@ -247,26 +303,47 @@ export function App() {
 
   useEffect(() => {
     try {
-      const payload: PersistedSession = {
-        isAuthenticated,
-        activeTab,
-        userRole,
-        loggedUserName,
-        loggedUserEmail,
-        driverTrailerId,
-      };
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(UI_TAB_STORAGE_KEY, activeTab);
     } catch {
       // ignore
     }
-  }, [
-    isAuthenticated,
-    activeTab,
-    userRole,
-    loggedUserName,
-    loggedUserEmail,
-    driverTrailerId,
-  ]);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!authToken) return;
+    let cancelled = false;
+    apiVerifySession(authToken).then((verifiedUser) => {
+      if (cancelled) return;
+      if (!verifiedUser) {
+        clearStoredAuthSession();
+        setAuthToken('');
+        setIsAuthenticated(false);
+        return;
+      }
+      const nextRole = (verifiedUser.role || 'ADMIN') as UserRoleType;
+      setLoggedUserId(verifiedUser.id);
+      setUserRole(nextRole);
+      setLoggedUserName(verifiedUser.name);
+      setLoggedUserEmail(verifiedUser.email);
+      if (verifiedUser.driverTrailerId) {
+        setDriverTrailerId(verifiedUser.driverTrailerId);
+      }
+      setActiveTab((prev) => normalizeTabForRole(prev, nextRole));
+      if (nextRole === 'ADMIN') {
+        apiListUsers(authToken)
+          .then((list) => {
+            if (cancelled) return;
+            setPendingInvitesCount(list.filter((u) => u.status === 'INVITED').length);
+          })
+          .catch(() => {
+            // ignore
+          });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken]);
 
   const [trailers, setTrailers] = usePersistentState<TrailerUnit[]>(
     TRAILERS_STORAGE_KEY,
@@ -339,37 +416,72 @@ export function App() {
   );
   const [selectedTrailerId, setSelectedTrailerId] =
     useState<string>('BH 67 STS');
-  const [globalSearch, setGlobalSearch] = useState<string>('');
-  const [mobileSearchOpen, setMobileSearchOpen] = useState<boolean>(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState<boolean>(false);
+  const [fleetJumpFilter, setFleetJumpFilter] =
+    useState<FleetBoardExternalFilter | null>(null);
+  const [ordersFocusNonce, setOrdersFocusNonce] = useState<number>(0);
 
-  const handleLoginSuccess = (
-    role: UserRoleType,
-    userName: string,
-    userEmail: string,
-    assignedTrailer?: string
+  const handleAuthenticated = (
+    user: AuthUserRecord,
+    token: string,
+    _remember: boolean
   ) => {
+    const role = (user.role || 'ADMIN') as UserRoleType;
+    setAuthToken(token);
+    setLoggedUserId(user.id);
     setUserRole(role);
-    setLoggedUserName(userName);
-    setLoggedUserEmail(userEmail);
-    if (assignedTrailer) {
-      setDriverTrailerId(assignedTrailer);
+    setLoggedUserName(user.name);
+    setLoggedUserEmail(user.email);
+    setHasInviteQuery(false);
+    if (user.driverTrailerId) {
+      setDriverTrailerId(user.driverTrailerId);
     }
-    if (role === 'SOFER') {
-      setActiveTab('driver');
-    } else if (role === 'FINANCIAR') {
-      setActiveTab('fleet');
-    } else {
-      setActiveTab('today');
-    }
+    setActiveTab(normalizeTabForRole('', role));
     setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
+    if (authToken) {
+      void apiLogoutSession(authToken);
+    }
+    clearStoredAuthSession();
+    setAuthToken('');
+    setLoggedUserId('');
+    setPendingInvitesCount(false ? 1 : 0);
     setIsAuthenticated(false);
   };
 
   const handleNavigate = (tab: string, trailerId?: string) => {
+    if (tab === 'orders-unassigned') {
+      setActiveTab('orders');
+      setMobileMoreOpen(false);
+      setOrdersFocusNonce(Date.now());
+      return;
+    }
+    if (tab === 'fleet-expiring') {
+      setFleetJumpFilter({
+        filterKind: 'expiring',
+        searchQuery: trailerId || '',
+        sortBy: 'rca',
+        nonce: Date.now(),
+      });
+      setActiveTab('fleet');
+      setMobileMoreOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    if (tab === 'fleet') {
+      setFleetJumpFilter({
+        filterKind: 'all',
+        searchQuery: trailerId || '',
+        sortBy: 'default',
+        nonce: Date.now(),
+      });
+      setActiveTab('fleet');
+      setMobileMoreOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     setActiveTab(tab);
     setMobileMoreOpen(false);
     if (trailerId) {
@@ -1017,18 +1129,6 @@ export function App() {
     );
   };
 
-  const filteredTrailers = globalSearch.trim()
-    ? trailers.filter(
-      (t) =>
-        t.id.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        t.tractorId.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        t.driver1.name.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        t.routeSummary.some((city) =>
-          city.toLowerCase().includes(globalSearch.toLowerCase())
-        )
-    )
-    : trailers;
-
   const pendingProposalsCount = proposals.filter(
     (p) => p.status === 'Pending review'
   ).length;
@@ -1044,16 +1144,12 @@ export function App() {
     roles: UserRoleType[];
   }[] = [
     {
-      id: 'today',
-      label: 'Dashboard',
-      shortLabel: 'Dashboard',
-      sub: 'De făcut azi',
-      icon: ListChecks,
-      badge:
-        unassignedOrders.length + pendingProposalsCount > 0
-          ? `${unassignedOrders.length + pendingProposalsCount}`
-          : undefined,
-      roles: ['ADMIN', 'DISPECER'] as UserRoleType[],
+      id: 'control',
+      label: 'Control Center',
+      shortLabel: 'Hartă',
+      sub: 'Hartă live · LDM',
+      icon: LayoutDashboard,
+      roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] as UserRoleType[],
     },
     {
       id: 'planning',
@@ -1062,6 +1158,18 @@ export function App() {
       sub: 'Calendar · Grupaje · Oferte',
       icon: CalendarRange,
       roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] as UserRoleType[],
+    },
+    {
+      id: 'today',
+      label: 'Operațional',
+      shortLabel: 'Operațional',
+      sub: 'De făcut azi',
+      icon: ListChecks,
+      badge:
+        unassignedOrders.length + pendingProposalsCount > 0
+          ? `${unassignedOrders.length + pendingProposalsCount}`
+          : undefined,
+      roles: ['ADMIN', 'DISPECER'] as UserRoleType[],
     },
     {
       id: 'orders',
@@ -1080,12 +1188,13 @@ export function App() {
       roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] as UserRoleType[],
     },
     {
-      id: 'control',
-      label: 'Control Center',
-      shortLabel: 'Hartă',
-      sub: 'Hartă live · LDM',
-      icon: LayoutDashboard,
-      roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] as UserRoleType[],
+      id: 'users',
+      label: 'Utilizatori',
+      shortLabel: 'Useri',
+      sub: 'Conturi · Roluri · Invitații',
+      icon: Users,
+      badge: pendingInvitesCount > 0 ? `${pendingInvitesCount}` : undefined,
+      roles: ['ADMIN'] as UserRoleType[],
     },
     {
       id: 'driver',
@@ -1167,19 +1276,83 @@ export function App() {
     },
   };
 
-  const primaryMobileTabs = navItems.slice(0, 5);
-  const secondaryMobileTabs = navItems.slice(5);
+  const primaryMobileTabs =
+    navItems.length > 5 ? navItems.slice(0, 4) : navItems;
+  const secondaryMobileTabs =
+    navItems.length > 5 ? navItems.slice(4) : [];
   const currentTabObj =
     navItems.find((n) => n.id === navGroupOf(activeTab)) || navItems[0];
 
-  if (!isAuthenticated) {
+  const driverPortalRoute = resolveDriverPortalRouteFromLocation(
+    trailers.map((t) => t.id)
+  );
+
+  // Link separat Portal Șofer (/sofer sau /sofer/BH-67-STS) — momentan fără parolă pentru testare
+  if (driverPortalRoute.isDriverPortalLink) {
+    const effectiveCabTrailerId =
+      driverPortalRoute.lockedTrailerId || driverTrailerId;
+    return (
+      <I18nProvider>
+        <div
+          data-theme={theme}
+          className="min-h-screen tahoe-wallpaper text-[#f5f5f7] flex flex-col transition-colors duration-200"
+        >
+          <header className="w-full h-[76px] px-4 sm:px-6 bg-[#080d1a]/95 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <DynamicBrandLogo height={46} className="shrink-0" />
+              <span className="hidden sm:inline-flex px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/35 whitespace-nowrap">
+                Portal Șoferi
+              </span>
+            </div>
+
+            <div className="ms-auto flex items-center justify-end gap-2.5 sm:gap-3.5 shrink-0">
+              <RomaniaLiveClock />
+              <span
+                aria-hidden="true"
+                className="ro-clock-divider hidden sm:block h-4 w-px bg-white/15 shrink-0"
+              />
+              <LanguageToggleBar />
+              <button
+                type="button"
+                onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+                className="w-9 h-9 rounded-full tahoe-btn-secondary flex items-center justify-center transition cursor-pointer"
+                title={
+                  theme === 'dark'
+                    ? 'Comută pe Modul Luminos'
+                    : 'Comută pe Modul Întunecat'
+                }
+                aria-label="Schimbă tema"
+              >
+                {theme === 'dark' ? (
+                  <Sun className="w-4 h-4 text-[#FF9F0A]" />
+                ) : (
+                  <Moon className="w-4 h-4 text-[#0A84FF]" />
+                )}
+              </button>
+            </div>
+          </header>
+
+          <main className="p-3 sm:p-5 max-w-7xl w-full mx-auto flex-1">
+            <DriverPortalView
+              trailers={trailers}
+              selectedDriverTrailerId={effectiveCabTrailerId}
+              onSelectDriverTrailerId={setDriverTrailerId}
+              isStrictDriverRole={Boolean(driverPortalRoute.lockedTrailerId)}
+              swapScenarios={TRAILER_SWAP_SCENARIOS}
+            />
+          </main>
+        </div>
+      </I18nProvider>
+    );
+  }
+
+  if (!isAuthenticated || hasInviteQuery) {
     return (
       <I18nProvider>
         <LoginView
-          trailers={trailers}
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-          onLoginSuccess={handleLoginSuccess}
+          onAuthenticated={handleAuthenticated}
         />
       </I18nProvider>
     );
@@ -1195,33 +1368,24 @@ export function App() {
           DESKTOP SIDEBAR — Docked Full-Height Sidebar
       ====================================================================== */}
       <aside className="hidden lg:flex lg:w-64 bg-[#080d1a]/95 backdrop-blur-2xl border-r border-white/10 shrink-0 flex-col sticky top-0 h-screen overflow-hidden">
-        {/* Brand Header: Dynamic Blue Trans Spedition Logo + SFERLE TMS PRO */}
-        <div className="pt-3.5 pb-3 px-4 mx-3 border-b border-white/10 flex flex-col items-center shrink-0">
+        {/* Brand Header: Dynamic Blue Trans Spedition Logo — Exact Same 76px Height as Top Header */}
+        <div className="tps-brand-bar h-[76px] px-4 border-b border-white/10 flex items-center justify-center shrink-0">
           <DynamicBrandLogo
-            height={76}
+            height={56}
             onClick={() =>
               handleNavigate(
                 userRole === 'SOFER'
                   ? 'driver'
                   : userRole === 'FINANCIAR'
                     ? 'fleet'
-                    : 'today'
+                    : 'control'
               )
             }
           />
-          <div className="mt-1.5 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#30D158]" />
-            <span className="sferle-brand-title text-[12.5px] font-extrabold tracking-tight leading-none">
-              SFERLE TMS
-            </span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#0A84FF]/15 text-[#0A84FF] border border-[#0A84FF]/35 leading-none">
-              PRO
-            </span>
-          </div>
         </div>
 
         {/* Navigation Items — macOS Tahoe Pill Selection */}
-        <nav className="p-3 space-y-1 flex-1 min-h-0 overflow-y-auto">
+        <nav aria-label="Meniu principal" className="p-3 space-y-1 flex-1 min-h-0 overflow-y-auto">
             <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">
               Meniu
             </div>
@@ -1233,10 +1397,14 @@ export function App() {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => handleNavigate(navTarget(item.id))}
-                  className={`w-full text-left px-4 py-2.5 rounded-full transition-all duration-200 flex items-center justify-between group cursor-pointer ${isActive
-                      ? 'tahoe-btn-primary text-white font-semibold'
-                      : 'hover:bg-white/8 text-white/80 hover:text-white'
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={() => {
+                    handleNavigate(navTarget(item.id));
+                    setMobileMoreOpen(false);
+                  }}
+                  className={`tps-nav-tab-btn w-full text-left px-4 py-2.5 rounded-full font-semibold flex items-center justify-between group cursor-pointer ${isActive
+                      ? 'tahoe-btn-primary text-white'
+                      : 'border border-transparent hover:bg-white/8 text-white/80 hover:text-white'
                     }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -1278,21 +1446,33 @@ export function App() {
             })}
         </nav>
 
-        {/* Bottom macOS Tahoe User Profile Card (Clean — No Duplicate Action Buttons) */}
-        <div className="p-3 m-3 rounded-[20px] tahoe-card-inner space-y-1.5 text-xs shrink-0">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[#64D2FF]">
-              {roleMeta[userRole].title}
-            </span>
-            <span className="w-2 h-2 rounded-full bg-[#30D158]" />
+        {/* Bottom macOS Tahoe User Profile Card + Version & Build Timestamp */}
+        <div className="px-3 pb-3 pt-1 space-y-2 shrink-0">
+          <div className="p-3 rounded-[20px] tahoe-card-inner space-y-1.5 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#64D2FF]">
+                {roleMeta[userRole].title}
+              </span>
+              <span className="w-2 h-2 rounded-full bg-[#30D158]" />
+            </div>
+            <div>
+              <div className="font-bold text-white truncate">
+                {loggedUserName}
+              </div>
+              <div className="text-[11px] text-white/55 truncate mt-0.5">
+                {loggedUserEmail}
+              </div>
+            </div>
           </div>
-          <div>
-            <div className="font-bold text-white truncate">
-              {loggedUserName}
-            </div>
-            <div className="text-[11px] text-white/55 truncate mt-0.5">
-              {loggedUserEmail}
-            </div>
+
+          <div
+            className="tps-sidebar-build-meta px-2 pt-0.5 flex items-center justify-between gap-2 text-[10.5px] tabular-nums text-white/50 select-none"
+            title={`Versiunea aplicației v${APP_VERSION} · Build generat la ${APP_BUILD_DATE_RO} (Ora României)`}
+          >
+            <span className="font-bold text-white/70">v{APP_VERSION}</span>
+            <time dateTime={APP_BUILD_ISO || undefined} className="truncate">
+              Build: {APP_BUILD_DATE_RO}
+            </time>
           </div>
         </div>
       </aside>
@@ -1301,78 +1481,45 @@ export function App() {
           MAIN CONTENT AREA (Mobile + Desktop)
       ====================================================================== */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Edge-to-Edge Header Bar — Romania Live Clock & Date FIRST */}
-        <header className="w-full h-[64px] px-4 sm:px-6 bg-[#080d1a]/95 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 sm:gap-3 shrink-0">
-          {/* Left Group: #1 Live Romania Time & Date + Mobile Brand + Desktop Spotlight Search */}
-          <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
-            {/* #1 FIRST IN HEADER: Live Romania Clock & Date (Europe/Bucharest) */}
-            <RomaniaLiveClock />
-
-            {/* Mobile Brand Only (Hidden on Desktop to avoid duplicating sidebar brand) */}
-            <div className="hidden sm:flex lg:hidden items-center gap-2 min-w-0">
-              <DynamicBrandLogo
-                height={38}
-                className="shrink-0"
-                onClick={() =>
-                  handleNavigate(userRole === 'SOFER' ? 'driver' : 'today')
-                }
-              />
-              <span className="text-xs font-bold text-white tracking-tight truncate">
-                {currentTabObj.label}
-              </span>
-            </div>
-
-            {/* Desktop Spotlight Search Input */}
-            <search className="hidden md:flex items-center flex-1 max-w-md min-w-0">
-              <div className="relative w-full">
-                <Search className="w-4 h-4 text-white/45 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="search"
-                  name="globalSearch"
-                  autoCorrect="off"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  aria-label="Caută remorcă, șofer sau oraș"
-                  value={globalSearch}
-                  onChange={(e) => setGlobalSearch(e.target.value)}
-                  placeholder="Caută remorcă (BH 67 STS), șofer, oraș (Viena, Rotterdam)..."
-                  className="w-full bg-white/8 hover:bg-white/12 focus:bg-white/14 border border-white/15 rounded-full pl-9 pr-4 py-1.5 text-xs text-white placeholder-white/45 focus:outline-none focus:border-[#007AFF] transition"
-                />
-                {globalSearch && (
-                  <button
-                    type="button"
-                    onClick={() => setGlobalSearch('')}
-                    aria-label="Șterge căutarea"
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full hover:bg-white/15 flex items-center justify-center text-white/50 hover:text-white text-xs cursor-pointer"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            </search>
+        {/* Top Edge-to-Edge Header Bar — Exact Same 76px Height as Sidebar Brand Header */}
+        <header className="tps-top-header sticky top-0 z-30 w-full h-[76px] px-4 sm:px-6 bg-[#080d1a]/95 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 sm:gap-4 shrink-0">
+          {/* Left Group: Mobile Brand Only (Hidden on Desktop to avoid duplicating sidebar brand) */}
+          <div className="tps-mobile-brand-wrap flex lg:hidden items-center gap-2 min-w-0 shrink">
+            <DynamicBrandLogo
+              height={34}
+              className="shrink-0"
+              onClick={() =>
+                handleNavigate(userRole === 'SOFER' ? 'driver' : 'control')
+              }
+            />
+            <span className="hidden md:inline text-xs font-bold text-white tracking-tight truncate">
+              {currentTabObj.label}
+            </span>
           </div>
 
-          {/* Right Quick Action Pills: Alerts + New Order + Icon-Only Theme Switcher & Icon-Only Logout */}
-          <div className="flex items-center gap-2 shrink-0">
-            {userRole !== 'SOFER' && (
-              <>
-                <button
-                  onClick={() => setMobileSearchOpen((v) => !v)}
-                  className="md:hidden w-9 h-9 rounded-full tahoe-btn-secondary text-white/80 flex items-center justify-center cursor-pointer"
-                  aria-label="Caută"
-                >
-                  <Search className="w-4 h-4" />
-                </button>
+          {/* Right Group: Frameless Right-Aligned Clock & Date + Action Controls */}
+          <div className="tps-header-right-actions ms-auto flex items-center justify-end gap-1.5 sm:gap-3 shrink-0">
+            <RomaniaLiveClock />
 
-                <button
-                  onClick={() => handleNavigate('offers')}
-                  className="px-3 py-1.5 rounded-full bg-[#FF9F0A]/20 hover:bg-[#FF9F0A]/30 border border-[#FF9F0A]/40 text-[#FF9F0A] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Bell className="w-3.5 h-3.5" />
-                  <span>{pendingProposalsCount}</span>
-                  <span className="hidden xl:inline">Oferte</span>
-                </button>
-              </>
+            <span
+              aria-hidden="true"
+              className="ro-clock-divider hidden sm:block h-4 w-px bg-white/15 shrink-0"
+            />
+            {userRole !== 'SOFER' && (
+              <button
+                type="button"
+                onClick={() => handleNavigate('offers')}
+                className="tps-offers-icon-btn relative w-9 h-9 rounded-full tahoe-btn-secondary flex items-center justify-center transition cursor-pointer shrink-0"
+                title={`${pendingProposalsCount} Oferte clienți`}
+                aria-label={`${pendingProposalsCount} Oferte clienți`}
+              >
+                <Bell className="tps-offers-bell-icon w-4 h-4 text-[#FF9F0A]" />
+                {pendingProposalsCount > 0 && (
+                  <span className="tps-offers-badge absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-extrabold tabular-nums leading-none flex items-center justify-center">
+                    {pendingProposalsCount}
+                  </span>
+                )}
+              </button>
             )}
 
             {/* Top Flag Language Switcher (RO | EN | FR | DE) */}
@@ -1408,36 +1555,11 @@ export function App() {
           </div>
         </header>
 
-        {/* Expandable Mobile Spotlight Search Bar */}
-        {mobileSearchOpen && (
-          <div className="md:hidden px-4 pt-2.5">
-            <div className="relative">
-              <Search className="w-4 h-4 text-white/50 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={globalSearch}
-                onChange={(e) => setGlobalSearch(e.target.value)}
-                placeholder="Filtrează remorcă (BH 67 STS), șofer, rută..."
-                className="w-full tahoe-glass rounded-full pl-9 pr-9 py-2 text-xs text-white placeholder-white/50 focus:outline-none"
-              />
-              {globalSearch && (
-                <button
-                  type="button"
-                  onClick={() => setGlobalSearch('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full hover:bg-white/15 flex items-center justify-center text-white/60 text-xs"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Main View Container — Full Width with Safe Area for Floating Dock */}
         <main className="p-3 sm:p-4 lg:px-4 lg:py-4 pb-28 lg:pb-8 flex-1 max-w-full w-full mx-auto">
           {(tabBar.length > 1 || DEMO_PAGES[activeTab]) && (
             <div className="flex flex-nowrap items-center justify-between gap-2 mb-3 overflow-x-auto no-scrollbar">
-              <div className="flex flex-nowrap items-center gap-2 overflow-x-auto no-scrollbar">
+              <div className="tps-subtab-scroller flex flex-nowrap items-center gap-2 overflow-x-auto no-scrollbar min-w-0">
                 {tabBar.length > 1 &&
                   tabBar.map((tb) => (
                     <button
@@ -1450,7 +1572,7 @@ export function App() {
                           inline: 'nearest',
                         });
                       }}
-                      className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer ${
+                      className={`tps-nav-tab-btn px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
                         activeTab === tb.id
                           ? 'bg-[#0A84FF] border border-[#0A84FF] text-white shadow-lg shadow-[#0A84FF]/25'
                           : 'tahoe-btn-secondary text-white/80 hover:text-white'
@@ -1465,7 +1587,11 @@ export function App() {
                     </button>
                   ))}
               </div>
-              {DEMO_PAGES[activeTab] && <DemoBadge label={DEMO_PAGES[activeTab]} />}
+              {DEMO_PAGES[activeTab] && (
+                <div className={tabBar.length > 1 ? 'hidden sm:block shrink-0' : 'shrink-0'}>
+                  <DemoBadge label={DEMO_PAGES[activeTab]} />
+                </div>
+              )}
             </div>
           )}
 
@@ -1484,7 +1610,8 @@ export function App() {
 
           {activeTab === 'control' && (
             <ControlCenterView
-              trailers={filteredTrailers.length > 0 ? filteredTrailers : trailers}
+              trailers={trailers}
+              planningCards={planningCards}
               matches={SMART_GROUPAGE_MATCHES}
               proposals={proposals}
               onNavigate={handleNavigate}
@@ -1493,7 +1620,7 @@ export function App() {
 
           {activeTab === 'planning' && (
             <Planning7DaysView
-              trailers={filteredTrailers.length > 0 ? filteredTrailers : trailers}
+              trailers={trailers}
               unassignedOrders={unassignedOrders}
               proposals={proposals}
               cards={planningCards}
@@ -1515,6 +1642,7 @@ export function App() {
               setActiveLoads={setActiveLoads}
               onCreateOrder={handleCreateOrder}
               onAssignOrderToTrailer={handleAssignOrderToTrailer}
+              focusAllocationNonce={ordersFocusNonce}
             />
           )}
 
@@ -1545,6 +1673,16 @@ export function App() {
             <TmsOperationsView
               trailers={trailers}
               subTab={activeTab === 'clients' ? 'clients' : 'fleet'}
+              fleetJumpFilter={fleetJumpFilter}
+            />
+          )}
+
+          {activeTab === 'users' && userRole === 'ADMIN' && (
+            <UsersAdminView
+              authToken={authToken}
+              currentUserId={loggedUserId}
+              trailers={trailers}
+              onUsersChanged={setPendingInvitesCount}
             />
           )}
 
@@ -1567,7 +1705,10 @@ export function App() {
       {/* =====================================================================
           MOBILE FLOATING LIQUID GLASS DOCK (iOS 26 / macOS Tahoe Style)
       ====================================================================== */}
-      <nav className="lg:hidden fixed bottom-3 left-3 right-3 z-50 rounded-full tahoe-pill-nav px-2.5 py-1.5 flex items-center justify-around">
+      <nav
+        aria-label="Meniu mobil"
+        className="tps-mobile-dock lg:hidden fixed bottom-3 left-2.5 right-2.5 z-50 rounded-full tahoe-pill-nav px-1.5 py-1.5 flex items-center justify-between gap-0.5"
+      >
         {primaryMobileTabs.map((item) => {
           const Icon = item.icon;
           const isActive = navGroupOf(activeTab) === item.id;
@@ -1575,14 +1716,15 @@ export function App() {
             <button
               key={item.id}
               type="button"
+              aria-current={isActive ? 'page' : undefined}
               onClick={() => handleNavigate(navTarget(item.id))}
-              className={`flex flex-col items-center justify-center py-1.5 px-3.5 rounded-full transition-all cursor-pointer ${isActive
-                  ? 'bg-[#007AFF] text-white shadow-md shadow-[#007AFF]/40'
-                  : 'text-white/65 hover:text-white'
+              className={`tps-nav-tab-btn flex-1 min-w-0 min-h-[46px] flex flex-col items-center justify-center py-1.5 px-1.5 rounded-full border cursor-pointer ${isActive
+                  ? 'bg-[#007AFF] border-[#007AFF] text-white shadow-md shadow-[#007AFF]/40'
+                  : 'border-transparent text-white/65 hover:text-white'
                 }`}
             >
-              <Icon className="w-4 h-4" />
-              <span className="text-[10px] font-semibold mt-0.5">
+              <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span className="text-[10px] font-semibold mt-0.5 whitespace-nowrap truncate max-w-full">
                 {item.shortLabel}
               </span>
             </button>
@@ -1590,21 +1732,25 @@ export function App() {
         })}
 
         {/* More Drawer Trigger for Secondary Tabs */}
-        <button
-          type="button"
-          onClick={() => setMobileMoreOpen((v) => !v)}
-          className={`flex flex-col items-center justify-center py-1.5 px-3.5 rounded-full transition-all cursor-pointer ${secondaryMobileTabs.some((t) => t.id === navGroupOf(activeTab)) || mobileMoreOpen
-              ? 'bg-white/20 text-white'
-              : 'text-white/65 hover:text-white'
-            }`}
-        >
-          {mobileMoreOpen ? (
-            <X className="w-4 h-4" />
-          ) : (
-            <MoreHorizontal className="w-4 h-4" />
-          )}
-          <span className="text-[10px] font-semibold mt-0.5">Mai mult</span>
-        </button>
+        {secondaryMobileTabs.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={mobileMoreOpen}
+            aria-label="Mai multe secțiuni din meniu"
+            onClick={() => setMobileMoreOpen((v) => !v)}
+            className={`tps-nav-tab-btn flex-1 min-w-0 min-h-[46px] flex flex-col items-center justify-center py-1.5 px-1.5 rounded-full border cursor-pointer ${secondaryMobileTabs.some((t) => t.id === navGroupOf(activeTab)) || mobileMoreOpen
+                ? 'bg-[#007AFF] border-[#007AFF] text-white shadow-md shadow-[#007AFF]/40'
+                : 'border-transparent text-white/65 hover:text-white'
+              }`}
+          >
+            {mobileMoreOpen ? (
+              <X className="w-4 h-4 shrink-0" aria-hidden="true" />
+            ) : (
+              <MoreHorizontal className="w-4 h-4 shrink-0" aria-hidden="true" />
+            )}
+            <span className="text-[10px] font-semibold mt-0.5 whitespace-nowrap">Mai mult</span>
+          </button>
+        )}
       </nav>
 
       {/* Mobile "Mai mult" Liquid Glass Sheet */}
@@ -1618,7 +1764,7 @@ export function App() {
             className="w-full max-w-md rounded-[26px] tahoe-glass-elevated p-4 space-y-2"
           >
             <div className="text-xs font-semibold text-white/50 px-2 pb-1">
-              Module Suplimentare SFERLE TMS PRO
+              Meniu
             </div>
             {secondaryMobileTabs.map((item) => {
               const Icon = item.icon;
@@ -1627,7 +1773,11 @@ export function App() {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => handleNavigate(navTarget(item.id))}
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={() => {
+                    handleNavigate(navTarget(item.id));
+                    setMobileMoreOpen(false);
+                  }}
                   className={`w-full px-4 py-3 rounded-full flex items-center justify-between text-left transition cursor-pointer ${isActive
                       ? 'tahoe-btn-primary text-white'
                       : 'tahoe-card-inner text-white/90 hover:bg-white/10'

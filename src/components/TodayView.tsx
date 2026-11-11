@@ -131,30 +131,72 @@ export const TodayView: React.FC<TodayViewProps> = ({
         />
       )}
 
-      {/* Antet + 3 contoare */}
+      {/* Antet + 3 contoare clickabile direct spre subiect */}
       <div className="tahoe-glass rounded-[28px] p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
-            Dashboard
+            Operațional
           </h1>
           <div className="text-xs text-white/55 mt-0.5 capitalize">{today}</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {[
-            { n: unassignedOrders.length, t: 'de plasat', c: '#0A84FF' },
-            { n: pendingProposals.length, t: 'de răspuns', c: '#FF9F0A' },
-            { n: problemsCount, t: 'probleme', c: '#FF453A' },
+            {
+              n: unassignedOrders.length,
+              t: 'de plasat',
+              c: '#0A84FF',
+              hint: 'Deschide alocarea comenzilor de plasat (Comenzi & curse)',
+              onClick: () => onNavigate('orders-unassigned'),
+            },
+            {
+              n: pendingProposals.length,
+              t: 'de răspuns',
+              c: '#FF9F0A',
+              hint: 'Deschide Oferte clienți (oferte de răspuns)',
+              onClick: () => onNavigate('offers'),
+            },
+            {
+              n: problemsCount,
+              t: 'probleme',
+              c: '#FF453A',
+              hint: 'Deschide alertele din Flotă (acte expirate / curând scadente)',
+              onClick: () =>
+                onNavigate(
+                  docAlerts.length === 0 && lowDrive.length > 0
+                    ? 'swap'
+                    : 'fleet-expiring'
+                ),
+            },
           ].map((c) => (
-            <div
+            <button
               key={c.t}
-              className="tahoe-card-inner rounded-2xl px-4 py-2 text-center min-w-[88px]"
-              style={{ borderTop: `3px solid ${c.c}` }}
+              type="button"
+              onClick={c.onClick}
+              title={c.hint}
+              aria-label={`${c.n} ${c.t} — ${c.hint}`}
+              className="today-kpi-shortcut tahoe-card-inner rounded-2xl px-4 py-2 text-center min-w-[96px] cursor-pointer select-none group"
+              style={
+                {
+                  borderTop: `3px solid ${c.c}`,
+                  '--kpi-accent': c.c,
+                } as React.CSSProperties
+              }
             >
-              <div className="text-2xl font-extrabold leading-none" style={{ color: c.c }}>
+              <div
+                className="text-2xl font-extrabold leading-none tabular-nums"
+                style={{ color: c.c }}
+              >
                 {c.n}
               </div>
-              <div className="text-[11px] font-semibold text-white/60 mt-1">{c.t}</div>
-            </div>
+              <div className="text-[11px] font-semibold text-white/65 mt-1 inline-flex items-center justify-center gap-0.5">
+                <span>{c.t}</span>
+                <ChevronRight
+                  aria-hidden="true"
+                  className="w-3 h-3 opacity-55 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
+                  style={{ color: c.c }}
+                />
+              </div>
+            </button>
           ))}
         </div>
       </div>
@@ -344,7 +386,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   {shownDocs.map((a) => (
                     <button
                       key={`${a.plate}-${a.doc}`}
-                      onClick={() => onNavigate('fleet')}
+                      type="button"
+                      onClick={() => onNavigate('fleet', a.plate)}
                       className="w-full flex items-center justify-between gap-2 px-3.5 py-1.5 rounded-full tahoe-card-inner text-left cursor-pointer hover:bg-white/10"
                     >
                       <span className="text-xs font-bold text-white truncate">

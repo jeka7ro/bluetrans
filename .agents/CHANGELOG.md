@@ -1,5 +1,221 @@
 # Jurnal de modificări (Antigravity ↔ Paperclip)
 
+### 2026-11-11 18:50 — Hartă panoramică pe rând complet cu cele 2 carduri dedesubt + optimizare completă pentru mobil fără regresii pe PC (`EuropeLiveMap.tsx`, `App.tsx`, `OrdersAndTripsView.tsx`, `FleetVinAndDossierModal.tsx`, `i18n.tsx`, `index.css`, `index.html`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Layout Hartă pe Rândul 1 + Celelalte 2 Carduri sub Hartă (`src/components/EuropeLiveMap.tsx`)**: harta live ocupă acum 100% din lățimea containerului pe un rând propriu (`lg:h-[500px]`), iar cele două carduri (`Active / Trecute` — `lg:col-span-5` și detaliile/etapele cursei `TR-4821` — `lg:col-span-7`) sunt așezate curat unul lângă altul dedesubt pe PC și stivuite vertical pe mobil.
+  2. **Optimizare completă pentru Mobil (`360px–430px`) cu 0 modificări pe PC (`>= 1024px`)**:
+     - **Header mobil fără suprapuneri (`App.tsx`, `i18n.tsx`, `index.css`)**: eliminat coliziunea dintre sigla `BLUE TRANS SPEDITION` și ceasul/data din `<header>` pe ecrane înguste (`60px` spațiu liber la `390px`, `30px` la `360px`), cu suport `viewport-fit=cover` și `env(safe-area-inset-top)`.
+     - **Dock plutitor mobil echilibrat (`App.tsx`, `index.css`)**: eliminat depășirea marginii drepte pe butonul `Mai mult` (`5` butoane egale `flex-1 min-w-0 min-h-[46px]` cu `env(safe-area-inset-bottom)` și `0` elemente ieșite din ecran).
+     - **Controale hartă & Full Screen `100dvh` (`EuropeLiveMap.tsx`)**: păstrat toate cele 4 butoane (`🌧️💨`, `+`, `−`, `Full Screen`) pe un singur rând pe mobil fără frângerea textului pe 2 linii.
+     - **Carduri mobile în `Comenzi & curse` și `Flotă` (`OrdersAndTripsView.tsx`, `FleetVinAndDossierModal.tsx`)**: adăugat vizualizare tip card nativ pe mobil (`md:hidden`) în **Comenzi & curse** (păstrând tabelul desktop `hidden md:block` neschimbat), stivuit fotografia de studio a camionului pe mobil (`< 640px`) și făcut vizibilă iconița de căutare în Light Mode.
+- **Fișiere:** `index.html`, `src/App.tsx`, `src/components/EuropeLiveMap.tsx`, `src/components/OrdersAndTripsView.tsx`, `src/components/FleetVinAndDossierModal.tsx`, `src/i18n/i18n.tsx`, `src/index.css`
+- **Ramură / Commit:** `main` (commit & push pe GitHub / Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat pe Desktop (`1480×1080` Light/Dark) și Mobil (`390×844` & `360×800`, `offenders: []`, `0` erori runtime)
+
+### 2026-11-11 18:37 — Animație meteo live stil AccuWeather / Windy (radar Doppler ploi, curenți de vânt animați 60fps și precipitații) pe harta din Control Center (`accuWeatherCanvas.ts`, `EuropeLiveMap.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Radar Doppler live multi-cadru (`attachLiveRainViewerRadar` în `src/utils/accuWeatherCanvas.ts`)**: conectat fluxul public RainViewer (`api.rainviewer.com/public/weather-maps.json`) pe un pane Leaflet dedicat (`zIndex: 245`, sub traseele și pinii camioanelor), rulând în buclă cadrele reale de precipitații Doppler peste toată Europa.
+  2. **Overlay `<canvas>` geografic High-DPI la 60fps (`startAccuWeatherCanvasAnimation` în `src/utils/accuWeatherCanvas.ts` + `src/components/EuropeLiveMap.tsx`)**: înlocuit vechile cercuri statice `L.circle` cu animație continuă sincronizată `1:1` cu coordonatele geografice Leaflet (`latLngToContainerPoint`), atât în modul normal, cât și în **Full Screen**:
+     - **Fronturi ciclonice Doppler în mișcare** (nuclee de ploaie verde → galben → portocaliu în Benelux/Marea Nordului, Valea Rinului și strâmtoarea Øresund + front de ninsoare cyan → indigo → violet pe coridorul scandinav `E4`).
+     - **175 de curenți de vânt curbați animați** (panglici fluide cu contur ocean-blue + miez luminos cyan-alb pentru contrast ridicat atât pe harta Light OSM, cât și pe Dark Mode, modelând Westerlies `V → E`, rafalele de `42 km/h` din Danemarca/Øresund și canalizarea `NV → SE` pe culoarul Dunării).
+     - ** Dâre înclinate de ploaie și fulgi de ninsoare în cădere** în interiorul celulelor active, plus conservare automată CPU/baterie când harta iese din ecran (`content-visibility: auto` + `contentvisibilityautostatechange`, fallback `IntersectionObserver` și `prefers-reduced-motion: reduce`).
+- **Fișiere:** `src/utils/accuWeatherCanvas.ts`, `src/components/EuropeLiveMap.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual și animat în Chrome (`animated: true`, `0` erori runtime, `verify_accuweather_map_light.png`, `verify_accuweather_map_dark.png`)
+
+### 2026-11-11 18:26 — Eliminare fundal iconiță vreme și rezolvare suprapunere text pe etapele cursei (`EuropeLiveMap.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Eliminat complet caseta de fundal și bordura (`bg-white/[0.06] border border-white/10 rounded-lg`) din jurul iconițelor de vreme și temperaturii (`+11°`, `+10°`, `+9°`, `+7°`, `+8°`) din cardul etapelor cursei (`src/components/EuropeLiveMap.tsx`).
+  - Rezolvat suprapunerea textului distanței/orei (`Azi 14:30 · 540 km`, `Mâine 08:30 · 1.310 km`) peste iconița de vreme prin aplicarea `flex-1 min-w-0` și `truncate` pe coloana stângă a fiecărui checkpoint (înlocuind `whitespace-nowrap` neîncadrat care ieșea din container) și afișarea compactă a km pe cardul lateral de `340px`.
+- **Fișiere:** `src/components/EuropeLiveMap.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual pe Light Mode și Dark Mode (`verify_weather_nobg_light.png`, `verify_weather_nobg_dark.png`)
+
+### 2026-11-11 18:18 — Sincronizare completă Planificare ↔ Control Center și separare clară Active / Trecute (`planningRouteSync.ts`, `EuropeLiveMap.tsx`, `ControlCenterView.tsx`, `Planning7DaysView.tsx`, `App.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Sincronizare rutieră între Planificare și Control Center (`src/utils/planningRouteSync.ts`, `src/App.tsx`)**: toate cursele din **Planificare** (`planningCards` — inclusiv cursele de retur precum `Stockholm → Oradea`, cursele nou create precum `București → Rotterdam` și cursele alocate pe oricare dintre cele 47 de vehicule din flotă) generează automat coridorul terestru de autostrăzi europene + geometria rutieră OSRM și apar pe harta și în lista din **Control Center**, fără dublarea partidelor de grupaj deja aflate pe cele 7 coridoare live.
+  2. **Separare strictă `Active` vs `Trecute` pe hartă, în listă și în calendar (`EuropeLiveMap.tsx`, `ControlCenterView.tsx`, `Planning7DaysView.tsx`, `index.css`)**:
+     - În **Control Center** (atât în panoul din dreapta hărții, cât și în lista de sub hartă și cardul KPI `Curse active`): comutator sincronizat **`Active (N)`** (`În tranzit` + `Planificate`, cu traseu punctat și pin `◷` la origine pentru plecările viitoare) vs **`Trecute (M)`** (cursele finalizate/expirate cu pin `✓` la destinație și istoric curat, fără amestec cu flota activă).
+     - În **Planificare** (`Calendar 7 zile`): badge-uri explicite pe fiecare card (`● Activă`, `◷ Plan`, `✓ Trecută` + contur punctat pe cursele trecute), filtru rapid **`Toate | Active | Trecute`** în antetul calendarului și hartă dedicată per cursă în fereastra **Detalii Cursă** (`buildSingleCardMapTrip`, afișând exact ruta cardului selectat, ex. `București → Rotterdam · 2.205 km`).
+- **Fișiere:** `src/utils/planningRouteSync.ts`, `src/components/EuropeLiveMap.tsx`, `src/components/ControlCenterView.tsx`, `src/components/Planning7DaysView.tsx`, `src/components/GoogleMapsAddressInput.tsx`, `src/App.tsx`, `src/index.css`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual și interactiv în Chrome pe Light Mode și Dark Mode
+
+### 2026-11-11 17:42 — Simplificare pastilă stânga-jos pe hartă la „Traseu Rutier Camioane” (`EuropeLiveMap.tsx`, `i18n.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Păstrat exclusiv indicatorul **`🔵 Traseu Rutier Camioane`** în pastila din stânga-jos a hărții (`src/components/EuropeLiveMap.tsx`, atât în **Control Center**, cât și în fereastra **Detalii Cursă**), eliminând textul `(OSRM HGV)`, `Autohof Swap` și butonul `Zoom Scroll: ACTIV / OPRIT`.
+- **Fișiere:** `src/components/EuropeLiveMap.tsx`, `src/i18n/i18n.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`)
+
+### 2026-11-11 17:39 — Eliminare contur fantomă la schimbarea taburilor și itemilor din meniu (`App.tsx`, `TmsOperationsView.tsx`, `UsersAdminView.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Rezolvat conturul tranzitoriu care apărea pentru ~`200ms` pe tabul precedent la comutare (cauzat de `transition-all duration-200` / `transition` aplicat simultan cu dispariția instantanee a `background-image: linear-gradient(...)` în timp ce `border-width: 1px -> 0px`, `border-color`, `outline-color` și `box-shadow` încă se animau pe o pastilă deja transparentă).
+  - Unificat `border: 1px solid transparent` pe itemii inactivi din meniu și setat `transition: none !important; outline: none;` pe `.tps-nav-tab-btn`, `aside nav button`, `[role="tab"]` și `[role="group"] > button` (păstrând `:focus-visible` doar la navigarea din tastatură), astfel încât comutarea între taburi este instantanee și curată pe Light Mode și Dark Mode.
+- **Fișiere:** `src/App.tsx`, `src/components/TmsOperationsView.tsx`, `src/components/UsersAdminView.tsx`, `src/index.css`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat la `t = 10ms` în Chrome pe Light Mode și Dark Mode (`transitionDuration: 0s`, `borderColor: rgba(0,0,0,0)`, `outlineStyle: none`, `boxShadow: none`)
+
+### 2026-11-11 17:35 — Eliminare card gol de titlu „Control Center” din partea de sus a paginii (`ControlCenterView.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Eliminat banda/cardul lat gol cu textul `Control Center` din partea de sus a `src/components/ControlCenterView.tsx` (păstrând doar `<h1 className="sr-only">Control Center</h1>` pentru accesibilitate), astfel încât pagina începe direct cu cele 6 carduri KPI și harta live.
+- **Fișiere:** `src/components/ControlCenterView.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`)
+
+### 2026-11-11 17:33 — Redenumire „Dashboard” în „Operațional” și reordonare completă a meniului (`App.tsx`, `TodayView.tsx`, `i18n.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Redenumit **`Dashboard`** în **`Operațional`** atât în meniul principal/mobil (`src/App.tsx`), cât și în titlul paginii `<h1>` (`src/components/TodayView.tsx`), plus intrările de traducere (`RO | EN | FR | DE`) în `src/i18n/i18n.tsx`.
+  - Reordonat meniul în `allNavItems` exact în ordinea cerută: **1. Control Center**, **2. Planificare**, **3. Operațional**, **4. Comenzi & curse**, **5. Flotă**, **6. Utilizatori**, cu **Control Center** ca pagină implicită la intrare și la click pe logo.
+- **Fișiere:** `src/App.tsx`, `src/components/TodayView.tsx`, `src/i18n/i18n.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`)
+
+### 2026-11-11 17:30 — Eliminare câmp de căutare globală din `<header>` (`src/App.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Eliminat complet câmpul de căutare `Caută remorcă (BH 67 STS), șofer, oraș...` (și butonul/sertarul echivalent de mobil) din bara `<header>` în `src/App.tsx`, păstrând headerul curat doar cu ceasul/data și butoanele de acțiune din dreapta.
+- **Fișiere:** `src/App.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`)
+
+### 2026-11-11 17:28 — Mărire cu 25% a cardurilor de status polițe/leasing („RCA | CASCO | CMR | Leasing”) în Flotă (`FleetVinAndDossierModal.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Mărit cu **25%** blocul cu cele 4 carduri colorate `RCA | CASCO | CMR | Leasing` din lista de carduri vehicule (`MasinileMeleFleetBoard` în `src/components/FleetVinAndDossierModal.tsx`): lățime mărită de la `235px` la `18.5rem` (`296px`), înălțime minimă la `3.5rem` (`~66px` cu conținut), rază `18px`, plus scalarea proporțională cu +25% a tuturor fonturilor în `rem` (`RCA/CASCO/CMR/Leasing`: `0.625rem`, zile: `1.1rem`, text leasing: `0.7rem`, asigurător: `0.5875rem`) și a spațierii interioare (`py-1.5 px-1.5 gap-0.5`).
+- **Fișiere:** `src/components/FleetVinAndDossierModal.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual în Chrome (`verify_fleet_status_cards_25pct.png`)
+
+### 2026-11-11 17:24 — Afișare pe 2 rânduri a ceasului din `<header>` (ora deasupra datei, font redus pentru dată) (`RomaniaLiveClock.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Reorganizat `<RomaniaLiveClock />` (`src/components/RomaniaLiveClock.tsx`, `src/index.css`) pe **2 rânduri aliniate la dreapta** (`flex-col items-end text-end`): **ora** sus (`0.9rem`, `line-height: 1.15`, `font-extrabold`) și **data** dedesubt cu font mai mic (`0.6875rem`, `line-height: 1.2`, `font-medium`), fără separatorul vertical `|`, încadrându-se la milimetru (`31.75px` înălțime totală) în headerul de `76px` atât pe Dark Mode, cât și pe Light Mode.
+- **Fișiere:** `src/components/RomaniaLiveClock.tsx`, `src/index.css`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual pe Dark Mode și Light Mode (`verify_stacked_clock_dark.png`, `verify_stacked_clock_light.png`)
+
+### 2026-11-11 17:21 — Mutare „Control Center” imediat sub „Dashboard” în meniu (`src/App.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Mutat itemul **`Control Center`** (`id: 'control'`) pe poziția a doua în `allNavItems` din `src/App.tsx`, imediat sub **`Dashboard`** (`Dashboard` → `Control Center` → `Planificare` → `Comenzi & curse` → `Flotă` → `Utilizatori`), sincronizând atât sidebarul desktop, cât și dock-ul mobil, și adăugat `aria-current="page"` pe itemul activ din `<nav>`.
+- **Fișiere:** `src/App.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`)
+
+### 2026-11-11 17:18 — Cardurile sumare KPI din Dashboard („de plasat”, „de răspuns”, „probleme”) făcute clickabile cu navigare directă la subiect
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Carduri KPI interactive în `TodayView.tsx` + `src/index.css`**: transformat cele 3 carduri din dreapta-sus (`de plasat`, `de răspuns`, `probleme`) din `<div>` statice în butoane `<button type="button" className="today-kpi-shortcut">` cu micro-indicator `ChevronRight`, efect tactil la hover/press, contur `:focus-visible` și `aria-label` descriptiv.
+  2. **Navigare directă la subiect (`App.tsx`, `OrdersAndTripsView.tsx`, `TmsOperationsView.tsx`, `FleetVinAndDossierModal.tsx`)**:
+     - **`de plasat`** → deschide **Comenzi & curse** și derulează lin + focalizează (`preventScroll: true`) + evidențiază panoul de alocare comenzi (`#orders-allocation-wizard`).
+     - **`de răspuns`** → deschide direct **Planificare › Oferte clienți**.
+     - **`probleme`** → deschide **Flotă** pre-filtrată automat pe **`Expiră curând (≤ 14 zile)`** și sortată după urgența RCA (`BH 49 STS`, `BH 46 STS`, `BH 56 STS`), aliniind filtrul `expiring` din `MasinileMeleFleetBoard` cu `getFleetDocAlerts(14)` (`RCA`, `CASCO`, `CMR` pe vehicule active), iar clickul pe fiecare alertă punctuală caută direct numărul de înmatriculare în Flotă.
+- **Fișiere:** `src/components/TodayView.tsx`, `src/components/OrdersAndTripsView.tsx`, `src/components/TmsOperationsView.tsx`, `src/components/FleetVinAndDossierModal.tsx`, `src/App.tsx`, `src/index.css`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual și interactiv în Chrome pe Light Mode și Dark Mode (`verify_today_kpi_light.png`, `verify_today_kpi_dark.png`, `verify_probleme_fleet_filtered.png`)
+
+### 2026-11-11 16:55 — Buton „Oferte” transformat în iconiță cu badge numeric și selector de limbă tip droplist Tahoe (`src/App.tsx`, `src/i18n/i18n.tsx`, `src/index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - **Oferte ca iconiță (`src/App.tsx`, `src/index.css`)**: înlocuit pastila lată `🔔 3 Oferte` din `<header>` cu un buton rotund compact `36×36` (`.tps-offers-icon-btn`, aliniat cu butoanele de temă și deconectare) cu clopoțel și badge numeric portocaliu în colț (`.tps-offers-badge`).
+  - **Limbi ca droplist Tahoe (`src/i18n/i18n.tsx`, `src/index.css`)**: înlocuit bara cu 4 butoane din `<LanguageToggleBar />` cu un droplist compact (`h-9`, `[🇷🇴 RO ▾]`) și meniu flotant Tahoe Glass (`.tps-lang-menu`) cu `Română`, `English`, `Français` și `Deutsch`, bifă pe limba activă, navigare cu săgeți + `Escape` și adaptare completă pe Light Mode și Dark Mode (inclusiv în Login și Portal Șoferi).
+- **Fișiere:** `src/App.tsx`, `src/i18n/i18n.tsx`, `src/index.css`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual și interactiv pe Light Mode și Dark Mode (`verify_header_lang_bell_light.png`, `verify_header_lang_bell_dark.png`)
+
+### 2026-11-11 16:45 — Fundal de hartă rutieră clar vizibil pe cardurile de curse în Dark Mode (`src/index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Readus în prim-plan fundalul cartografic OpenStreetMap pe cardurile din **Calendar 7 zile** pe **Dark Mode** (`.planning-card-map-tile` cu `opacity: 0.76`, `mix-blend-mode: normal`, `invert(0.92) hue-rotate(196deg) saturate(0.92) brightness(1.05) contrast(1.16)` și mască gradată deschisă spre dreapta `.planning-card-map-mask` până la `0.22`), astfel încât autostrăzile, apele și orașele (`Hilversum`, `Wien`, `Lübeck`, `München`, `Frankfurt`) se văd clar în stil Dark Navigation, fără să murdărească suprafața cardului.
+  - Întărit contrastul pastilelor `.planning-pill-ldm`, `.planning-pill-tons` și `.planning-driver-chip` cu `backdrop-filter: blur(4px)` deasupra hărții vizibile.
+- **Fișiere:** `src/index.css`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual pe Dark Mode și Light Mode (`verify_dark_map_cards_closeup.png`, `verify_light_map_cards_closeup.png`)
+
+### 2026-11-11 16:38 — Favicon rotund pe fundal alb cu camionul Blue Trans Spedition (`public/favicon.svg`, `public/favicon.png`, `public/apple-touch-icon.png`, `index.html`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Refăcut `public/favicon.svg` pe **disc rotund perfect cu fundal alb (`#ffffff`)** și contur fin (`#cbd5e1`), cu silueta camionului **Blue Trans Spedition** în albastru intens cu contrast ridicat (`#004aad` → `#0284c7` → `#0ea5e9`).
+  - Regenerat `public/favicon.png` (`64×64` cu exterior transparent) și `public/apple-touch-icon.png` (`180×180`), plus `?v=2` în `index.html` pentru reîmprospătarea imediată a iconiței în tabul browserului.
+- **Fișiere:** `public/favicon.svg`, `public/favicon.png`, `public/apple-touch-icon.png`, `index.html`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual la `16px`, `20px`, `32px` și `64px` pe bară de taburi închisă și luminoasă
+
+### 2026-11-11 16:34 — Afișare automată versiune și data build-ului jos în sidebar (`vite.config.ts`, `package.json`, `App.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Adăugat `computeBuildMetadata()` în `vite.config.ts` (citește versiunea din `package.json` — `v1.1.0` — și generează automat data/ora build-ului pe fusul `Europe/Bucharest`, ex. `11.11.2026 · 16:32`, injectate la compilare prin `__APP_VERSION__`, `__APP_BUILD_DATE_RO__`, `__APP_BUILD_ISO__`).
+  - Afișat în partea de jos a meniului lateral (`<aside>` în `src/App.tsx`, sub cardul utilizatorului) `v1.1.0` și `<time>Build: DD.MM.YYYY · HH:MM</time>`.
+- **Fișiere:** `vite.config.ts`, `package.json`, `src/App.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual pe Dark Mode și Light Mode
+
+### 2026-11-11 16:30 — Aliniere la milimetru (`76px`) între antetul din sidebar (logo) și `<header>` (`App.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Egalizat înălțimea antetului cu logo din meniul lateral (`.tps-brand-bar`, `h-[76px]`, fără `mx-3`) și a barei principale `<header>` (`.tps-top-header`, `h-[76px] sticky top-0 z-30`), astfel încât linia orizontală inferioară este continuă cap-coadă (`deltaPx: 0`) atât pe Light Mode, cât și pe Dark Mode.
+- **Fișiere:** `src/App.tsx`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat geometric și vizual în Chrome (`sidebarBrandHeight: 76`, `topHeaderHeight: 76`, `deltaPx: 0`)
+
+### 2026-11-11 16:27 — Ceas și dată fără ramă/fundal și fără „RO”, aliniate în dreapta în `<header>` (`RomaniaLiveClock.tsx`, `App.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Curățat `<RomaniaLiveClock />` (`src/components/RomaniaLiveClock.tsx`, `src/index.css`)**:
+     - Eliminat complet steagul/textul `RO` și eliminat cadrul cu fundal (`.ro-live-clock-pill`), lăsând ora și data României (`16:27:08 | Miercuri, 11 Noiembrie 2026`) afișate curat direct pe bara de sus, atât pe Light Mode, cât și pe Dark Mode.
+  2. **Aliniat ceasul cu data în partea dreaptă a headerului (`src/App.tsx`)**:
+     - Mutat `<RomaniaLiveClock />` în grupul aliniat la dreapta (`ms-auto`) din `<header>` (atât în aplicația principală, cât și în Portalul Șoferi `/sofer`), lăsând câmpul de căutare pe stânga și păstrând logo-ul **Blue Trans Spedition** curat (fără niciun text sub el).
+- **Fișiere:** `src/components/RomaniaLiveClock.tsx`, `src/App.tsx`, `src/index.css`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual pe Light Mode și Dark Mode
+
+### 2026-11-11 16:21 — Redesign complet al cardurilor de curse pe Dark Mode în „Calendar 7 zile” (`Planning7DaysView.tsx`, `index.css`, `index.html`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Eliminat aspectul șters / murdar al hărții OpenStreetMap pe Dark Mode (`.planning-trip-card`, `.planning-card-map-tile`, `.planning-card-map-mask` în `src/index.css`)**:
+     - Creat suprafața dedicată Dark Tahoe Glass (`linear-gradient(165deg, #131f38 0%, #0d1629 56%, #09101f 100%)` cu iluminare interioară discretă și umbre profunde) și transformat textura cartografică OSM pe Dark Mode în plan rutier dark-navy discret (`invert(0.92) hue-rotate(188deg)`, `mix-blend-mode: screen`, `opacity: 0.22`) cu mască gradată închisă, păstrând totodată harta luminoasă naturală pe Light Mode.
+  2. **Înlocuit pastilele albe stridente și culorile fără contrast de pe carduri (`src/components/Planning7DaysView.tsx` — `renderCellCard`)**:
+     - Structurat semantic cardul cu `<article className="planning-trip-card">` (`container-type: inline-size`), `<header className="planning-card-header">` (cu punct luminos de status `blue` / `green` / `amber` / `purple` și degradeuri curate fără nuanțe maronii șterse) și `<footer>`.
+     - Înlocuit stilurile inline albe (`#ffffff`) de pe `LDM` și `T` cu pastile adaptate temei (`.planning-pill-ldm` albastru-gheață `#bae6fd` și `.planning-pill-tons` auriu `#fde68a` pe Dark Mode; `#f0f9ff` / `#fff7ed` pe Light Mode) și înlocuit movul strident `#d946ef` al kilometrilor și albastrul închis `#0284c7` al temperaturii cu nuanțe cu contrast ridicat WCAG AA/AAA (`#cbd5e1` și `#7dd3fc` pe Dark Mode), plus `<meta name="color-scheme" content="light dark" />` în `index.html` și suport `@media (forced-colors: active)`.
+- **Fișiere:** `src/components/Planning7DaysView.tsx`, `src/index.css`, `index.html`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual și în DOM în Chrome pe Dark Mode și Light Mode (`15` carduri uniforme `196px`, `0` erori consolă)
+
+### 2026-11-11 16:11 — Favicon cu logo-ul camionului Blue Trans Spedition și eliminarea completă a textelor „SFERLE TMS PRO” din aplicație
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Favicon oficial cu camionul Blue Trans Spedition (`public/favicon.svg`, `public/favicon.png`, `public/apple-touch-icon.png`, `index.html`, `server.mjs`)**:
+     - Creat faviconul vectorial `public/favicon.svg` (plus variantele raster `64×64` și `180×180` și ruta `/favicon.ico` în `server.mjs`) folosind silueta vectorială originală a camionului **Blue Trans Spedition**, și actualizat `<title>` în `index.html` la **`Blue Trans Spedition`**.
+  2. **Eliminat complet textul și insigna `SFERLE TMS` / `PRO` din întreaga aplicație (`src/App.tsx`, `src/components/OrdersAndTripsView.tsx`, `src/components/UsersAdminView.tsx`, `src/components/AnalysisAndScenariosView.tsx`, `src/i18n/i18n.tsx`, `src/index.css`)**:
+     - Păstrat exclusiv logo-ul **Blue Trans Spedition** în antetul meniului lateral și curățat toate titlurile de ferestre, dicționarul de traduceri și șabloanele de email.
+- **Fișiere:** `public/favicon.svg` (nou), `public/favicon.png` (nou), `public/apple-touch-icon.png` (nou), `index.html`, `src/App.tsx`, `src/components/OrdersAndTripsView.tsx`, `src/components/UsersAdminView.tsx`, `src/components/AnalysisAndScenariosView.tsx`, `src/i18n/i18n.tsx`, `src/index.css`, `server.mjs`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat vizual și în DOM în Chrome (`Document title: Blue Trans Spedition`, `Any SFERLE text in DOM: false`, favicon `/favicon.svg` + `/favicon.png` încărcate cu `200 OK`)
+
+### 2026-11-11 16:02 — Pagină clasică de autentificare (Email/Utilizator + Parolă cu ochi + Ține-mă minte), tabel Admin de utilizatori & invitații pe roluri și link separat fără parolă pentru Portalul Șoferilor (`/sofer`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Pagină de autentificare clasică și curată (`src/components/LoginView.tsx`)**:
+     - Eliminat 100% vechiul ecran demo pe două coloane, cardurile presetate și textele explicative.
+     - Card central compact conform sistemului grafic Tahoe (Dark Mode + Light Mode): **Logo Blue Trans Spedition**, **`Autentificare`**, **`Email sau utilizator`** (`autocomplete="username"`), **`Parolă`** cu buton **ochi** (`Eye` / `EyeOff`, `aria-pressed`), bifă **`Ține-mă minte`** (`localStorage` vs `sessionStorage`) și buton capsulă **`Intră în cont`**, plus fluxul **`Activare cont`** la accesarea unui link `?invite=<token>`.
+  2. **Backend de autentificare și invitații persistente pe roluri (`authServer.mjs`, `server.mjs`, `vite.config.ts`, `src/data/authClient.ts`, `src/components/UsersAdminView.tsx`)**:
+     - Parolă criptată cu sare (`crypto.scryptSync` + `crypto.timingSafeEqual`), sesiuni și tokenuri de invitație salvate persistent pe volumul Railway (`/data/auth-users.json`) și local (`.data/auth-users.json`, ignorat în `.gitignore`).
+     - Meniu nou **`Utilizatori`** (vizibil pentru `ADMIN`): tabel semantic responsiv cu căutare, filtrare pe roluri (`Administrator`, `Dispecer`, `Financiar`, `Invitați`), fereastră **`+ Invită utilizator`** (`<dialog closedby="any">` cu generare link de invitație sau setare directă a parolei), editare rol/status/parolă și ștergere inline.
+  3. **Link separat pentru Portalul Șoferilor (`/sofer` și `/sofer/:camion`, fără parolă momentan pentru test — `src/App.tsx`, `src/components/DriverPortalView.tsx`, `src/components/UsersAdminView.tsx`)**:
+     - Accesarea `/sofer` deschide direct **Portalul Șoferilor** fără parolă (cu selector de cabină pentru testare), iar `/sofer/BH-67-STS` (sau oricare dintre cele 7 camioane din tabul `Linkuri Portal Șoferi`) deschide direct cabina camionului respectiv restricționată la propria cursă (`DRIVER_PORTAL_AUTH_MODE = 'OPEN_TEST'`, pregătit pentru viitoarea autentificare cu Cod + PIN).
+- **Fișiere:** `authServer.mjs` (nou), `server.mjs`, `vite.config.ts`, `.gitignore`, `src/data/authClient.ts` (nou), `src/components/LoginView.tsx`, `src/components/UsersAdminView.tsx` (nou), `src/components/DriverPortalView.tsx`, `src/App.tsx`, `src/index.css`
+- **Ramură / Commit:** `main` (pregătit pentru commit & push pe Railway)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · verificat end-to-end și vizual în Chrome pe Dark Mode și Light Mode (autentificare clasică, comutator ochi parolă, invitație utilizator nou + activare cont pe `?invite=...`, linkuri directe `/sofer` și `/sofer/BH-69-STS` fără parolă)
+
 ### 2026-11-11 15:25 — Server de producție Node.js (`server.mjs`) cu volum persistent pentru cele 43 cărți CIV + Taloane/RCA și conectare remote `https://github.com/jeka7ro/bluetrans`
 - **Autor:** Antigravity
 - **Ce s-a făcut:**
@@ -10,8 +226,8 @@
   2. **Actualizat `package.json` & `.gitignore`**: adăugat `"start": "node server.mjs"` și `"engines": { "node": ">=20" }` (astfel încât Railpack/Railway detectează automat serviciul Node.js) și ignorat `**/.DS_Store`.
   3. **Configurat Git remote `origin`**: conectat la `https://github.com/jeka7ro/bluetrans.git` și rulat protocolul complet Pre-Push `audit-gatekeeper`.
 - **Fișiere:** `server.mjs` (nou), `package.json`, `.gitignore`
-- **Ramură / Commit:** `main` (pregătit pentru commit & push pe `origin/main` după confirmarea utilizatorului)
-- **Build / Teste:** `tsc -b` OK · `vite build` OK · smoke-test `server.mjs` OK (seeding 43 CIV PDF, `Range 206`, upload/delete `Talon - BH 50 STS.pdf`, `/api/health` HTTP 200) · audit Pre-Push `🟢 VERDE — 100% SIGUR PENTRU PUSH` (21/21)
+- **Ramură / Commit:** `main` · `2e3029b` (`origin/main` pe `https://github.com/jeka7ro/bluetrans` + live Railway `https://bluetrans-production.up.railway.app`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit Pre-Push `🟢 VERDE — 100% SIGUR PENTRU PUSH` (21/21) · deploy Railway `SUCCESS` (`fa472bfd`) cu volum persistent `/data` (`bluetrans-volume`, 5 GB) · testat live pe HTTPS (`documentsCount: 43` → upload `Talon` `44` → delete `43`)
 
 ### 2026-11-11 15:18 — Reconstrucție completă 3D sculptată (caroserie unibody cu dublă curbură, habitaclu 3D complet și faruri/grile conforme) pentru `Dacia Logan III` (`B 102 STS`, `B 196 STS`) și `Mercedes-Benz C 250 CDI W204` (`BH 01 STS`)
 - **Autor:** Antigravity

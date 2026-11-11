@@ -2,9 +2,11 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
 } from 'react';
+import { Check, ChevronDown } from 'lucide-react';
 
 export type AppLanguage = 'ro' | 'en' | 'fr' | 'de';
 
@@ -31,10 +33,10 @@ type TranslationTuple = [ro: string, en: string, fr: string, de: string];
 const RAW_DICTIONARY: TranslationTuple[] = [
   // ======================== APP SHELL, HEADER & NAVIGATION ========================
   [
-    'SFERLE TMS PRO · Sistem Integrat de Planificare, Grupaje Bi-Temp, Smart Trailer Swap și Portal Șoferi',
-    'SFERLE TMS PRO · Integrated Planning, Bi-Temp Groupage, Smart Trailer Swap & Driver Portal System',
-    'SFERLE TMS PRO · Système Intégré de Planification, Groupage Bi-Temp, Échange de Remorques et Portail Chauffeurs',
-    'SFERLE TMS PRO · Integriertes System für Disposition, Bi-Temp-Sammelgut, Smart Trailer Swap & Fahrerportal',
+    'Blue Trans Spedition · Sistem Integrat de Planificare, Grupaje Bi-Temp, Smart Trailer Swap și Portal Șoferi',
+    'Blue Trans Spedition · Integrated Planning, Bi-Temp Groupage, Smart Trailer Swap & Driver Portal System',
+    'Blue Trans Spedition · Système Intégré de Planification, Groupage Bi-Temp, Échange de Remorques et Portail Chauffeurs',
+    'Blue Trans Spedition · Integriertes System für Disposition, Bi-Temp-Sammelgut, Smart Trailer Swap & Fahrerportal',
   ],
   [
     'Caută remorcă (BH 67 STS), șofer, oraș (Viena, Rotterdam)...',
@@ -111,6 +113,12 @@ const RAW_DICTIONARY: TranslationTuple[] = [
   ['Arhitectură & Scenarii', 'Architecture & Scenarios', 'Architecture & Scénarios', 'Architektur & Szenarien'],
   ['+ Comandă nouă', '+ New Order', '+ Nouvelle Commande', '+ Neuer Auftrag'],
   ['+ Comandă', '+ New Order', '+ Commande', '+ Auftrag'],
+  ['Operațional', 'Operations', 'Opérationnel', 'Operativ'],
+  ['De făcut azi', 'Today’s Tasks', 'À faire aujourd’hui', 'Heute zu erledigen'],
+  ['Planificare', 'Planning', 'Planification', 'Planung'],
+  ['Comenzi & curse', 'Orders & Trips', 'Commandes & trajets', 'Aufträge & Touren'],
+  ['Flotă', 'Fleet', 'Flotte', 'Flotte'],
+  ['Utilizatori', 'Users', 'Utilisateurs', 'Benutzer'],
   ['Mai mult', 'More', 'Plus', 'Mehr'],
 
   // ======================== LOGIN VIEW ========================
@@ -194,6 +202,7 @@ const RAW_DICTIONARY: TranslationTuple[] = [
   ],
   ['Coridoare rutiere reale:', 'Real motorway corridors:', 'Corridors routiers réels :', 'Reale Autobahnkorridore:'],
   ['Traseu Rutier Camioane (OSRM HGV)', 'HGV Truck Route (OSRM)', 'Itinéraire Poids Lourds (OSRM)', 'LKW-Straßenroute (OSRM HGV)'],
+  ['Traseu Rutier Camioane', 'HGV Truck Route', 'Itinéraire Poids Lourds', 'LKW-Straßenroute'],
   ['© OpenStreetMap · Rutare Autostrăzi HGV', '© OpenStreetMap · HGV Motorway Routing', '© OpenStreetMap · Routage Autoroutes PL', '© OpenStreetMap · LKW-Autobahnrouting'],
   [
     '● Zoom mouse / trackpad activ',
@@ -767,7 +776,7 @@ const RAW_DICTIONARY: TranslationTuple[] = [
 
   // ======================== FORMS, MODALS & MOCK DATA PHRASES ========================
   ['COMANDĂ NOUĂ DE TRANSPORT / GRUPAJ', 'NEW TRANSPORT / GROUPAGE ORDER', 'NOUVELLE COMMANDE DE TRANSPORT / GROUPAGE', 'NEUER TRANSPORT- / SAMMELGUTAUFTRAG'],
-  ['Adaugă Comandă în SFERLE TMS PRO', 'Add Order to SFERLE TMS PRO', 'Ajouter la Commande dans SFERLE TMS PRO', 'Auftrag in SFERLE TMS PRO anlegen'],
+  ['Adaugă Cursă sau Comandă', 'Add Trip or Order', 'Ajouter un Trajet ou une Commande', 'Tour oder Auftrag anlegen'],
   ['Client (din Baza de Clienți)', 'Client (from Client Database)', 'Client (depuis la Base Clients)', 'Kunde (aus Kundenstamm)'],
   ['Client / Denumire Cursă (din Baza de Clienți)', 'Client / Shipment Name (from Client Database)', 'Client / Intitulé du Trajet (Base Clients)', 'Kunde / Tourenbezeichnung (aus Kundenstamm)'],
   ['Companie Client (din Baza de Clienți)', 'Client Company (from Client Database)', 'Société Cliente (Base Clients)', 'Kundenunternehmen (aus Kundenstamm)'],
@@ -1230,32 +1239,177 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({
 
 export const LanguageToggleBar: React.FC = () => {
   const { lang, setLang } = useI18n();
+  const [isOpen, setIsOpen] = useState(false);
+  const panelId = useId();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const activeOption =
+    LANGUAGE_OPTIONS.find((opt) => opt.code === lang) || LANGUAGE_OPTIONS[0];
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePointerDownOutside = (e: PointerEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    };
+
+    const handleFocusInOutside = (e: FocusEvent) => {
+      if (
+        containerRef.current &&
+        e.target instanceof Node &&
+        !containerRef.current.contains(e.target)
+      ) {
+        setIsOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDownOutside);
+    document.addEventListener('focusin', handleFocusInOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDownOutside);
+      document.removeEventListener('focusin', handleFocusInOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const focusOptionAt = (index: number) => {
+    const clamped =
+      ((index % LANGUAGE_OPTIONS.length) + LANGUAGE_OPTIONS.length) %
+      LANGUAGE_OPTIONS.length;
+    requestAnimationFrame(() => {
+      optionRefs.current[clamped]?.focus();
+    });
+  };
+
+  const handleTriggerKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const activeIdx = LANGUAGE_OPTIONS.findIndex((o) => o.code === lang);
+      setIsOpen(true);
+      focusOptionAt(activeIdx >= 0 ? activeIdx : 0);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setIsOpen(true);
+      focusOptionAt(LANGUAGE_OPTIONS.length - 1);
+    }
+  };
+
+  const handleOptionKeyDown = (
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    idx: number
+  ) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      focusOptionAt(idx + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      focusOptionAt(idx - 1);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      focusOptionAt(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      focusOptionAt(LANGUAGE_OPTIONS.length - 1);
+    }
+  };
 
   return (
     <div
+      ref={containerRef}
       data-no-translate="true"
-      className="inline-flex items-center gap-0.5 sm:gap-1 p-1 rounded-full tahoe-btn-secondary border border-white/15 shrink-0"
-      title="Română / English / Français / Deutsch"
+      className="tps-lang-dropdown relative inline-flex shrink-0"
     >
-      {LANGUAGE_OPTIONS.map((opt) => {
-        const isActive = lang === opt.code;
-        return (
-          <button
-            key={opt.code}
-            type="button"
-            onClick={() => setLang(opt.code)}
-            className={`px-2 py-1 rounded-full text-[11px] font-extrabold flex items-center gap-1 transition cursor-pointer ${
-              isActive
-                ? 'bg-[#0A84FF] text-white shadow-sm'
-                : 'text-white/75 hover:text-white hover:bg-white/10'
-            }`}
-            title={opt.name}
-          >
-            <span className="text-xs leading-none">{opt.flag}</span>
-            <span>{opt.label}</span>
-          </button>
-        );
-      })}
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-expanded={isOpen}
+        aria-controls={panelId}
+        aria-label={`Limba aplicației: ${activeOption.name} (${activeOption.label})`}
+        title={`Limbă: ${activeOption.name}`}
+        onClick={() => setIsOpen((v) => !v)}
+        onKeyDown={handleTriggerKeyDown}
+        className={`tps-lang-trigger h-9 px-3 rounded-full tahoe-btn-secondary inline-flex items-center gap-1.5 text-xs font-extrabold transition cursor-pointer select-none ${
+          isOpen ? 'is-open' : ''
+        }`}
+      >
+        <span className="text-sm leading-none" aria-hidden="true">
+          {activeOption.flag}
+        </span>
+        <span className="tps-lang-label tracking-wide">{activeOption.label}</span>
+        <ChevronDown
+          aria-hidden="true"
+          className={`tps-lang-chevron w-3.5 h-3.5 transition-transform duration-150 ${
+            isOpen ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+
+      {isOpen && (
+        <div
+          id={panelId}
+          role="group"
+          aria-label="Selectează limba"
+          className="tps-lang-menu absolute right-0 top-[calc(100%+8px)] z-50 w-44 p-1.5 rounded-2xl flex flex-col gap-0.5"
+        >
+          {LANGUAGE_OPTIONS.map((opt, idx) => {
+            const isActive = lang === opt.code;
+            return (
+              <button
+                key={opt.code}
+                ref={(el) => {
+                  optionRefs.current[idx] = el;
+                }}
+                type="button"
+                data-active={isActive ? 'true' : 'false'}
+                aria-pressed={isActive}
+                onKeyDown={(e) => handleOptionKeyDown(e, idx)}
+                onClick={(e) => {
+                  setLang(opt.code);
+                  setIsOpen(false);
+                  if (e.detail === 0) {
+                    triggerRef.current?.focus();
+                  }
+                }}
+                className="tps-lang-option w-full px-2.5 py-2 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold transition cursor-pointer text-left"
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm leading-none shrink-0" aria-hidden="true">
+                    {opt.flag}
+                  </span>
+                  <span className="truncate">{opt.name}</span>
+                </span>
+                <span className="flex items-center gap-1.5 shrink-0">
+                  <span className="tps-lang-code text-[10px] font-extrabold tracking-wider uppercase">
+                    {opt.label}
+                  </span>
+                  <Check
+                    aria-hidden="true"
+                    className={`w-3.5 h-3.5 transition-opacity ${
+                      isActive ? 'opacity-100 tps-lang-check' : 'opacity-0'
+                    }`}
+                  />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

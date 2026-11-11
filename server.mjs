@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { handleAuthApiRequest, resolveDefaultAuthDbPath } from './authServer.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const ROOT_DIR = path.dirname(__filename)
@@ -12,6 +13,7 @@ const ACTE_FLOTA_DIR = process.env.ACTE_FLOTA_DIR
   : process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'acte-flota')
     : BUNDLED_ACTE_DIR
+const AUTH_DB_PATH = resolveDefaultAuthDbPath(ROOT_DIR)
 
 const PORT = Number(process.env.PORT) || 3645
 const HOST = process.env.HOST || '0.0.0.0'
@@ -321,12 +323,17 @@ const server = http.createServer((req, res) => {
   const rawUrl = req.url || '/'
   const reqUrl = rawUrl.split('?')[0]
 
+  // 0. Authentication & Users / Invitations API (`/api/auth/*`)
+  if (handleAuthApiRequest(req, res, AUTH_DB_PATH)) {
+    return
+  }
+
   // 1. Healthcheck endpoint (for Railway & uptime monitoring)
   if ((req.method === 'GET' || req.method === 'HEAD') && reqUrl === '/api/health') {
     const docs = scanActeFlotaDir(ACTE_FLOTA_DIR)
     sendJson(res, 200, {
       ok: true,
-      service: 'sferle-tms-pro-blue-trans',
+      service: 'blue-trans-spedition',
       documentsCount: docs.length,
       persistentVolume: Boolean(
         process.env.ACTE_FLOTA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH
@@ -604,7 +611,8 @@ const server = http.createServer((req, res) => {
     decodedPath = '/'
   }
 
-  const relativePath = decodedPath.replace(/^\/+/, '')
+  const relativePath =
+    decodedPath === '/favicon.ico' ? 'favicon.png' : decodedPath.replace(/^\/+/, '')
   const candidatePath = path.resolve(DIST_DIR, relativePath || 'index.html')
   if (
     (candidatePath === DIST_DIR || candidatePath.startsWith(DIST_DIR + path.sep)) &&
@@ -637,12 +645,12 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(
-    `[SFERLE TMS PRO] Server pornit pe http://${HOST}:${PORT} · acte-flota: ${ACTE_FLOTA_DIR} (${initialIndex.files.length} documente)`
+    `[Blue Trans Spedition] Server pornit pe http://${HOST}:${PORT} · acte-flota: ${ACTE_FLOTA_DIR} (${initialIndex.files.length} documente)`
   )
 })
 
 function shutdown(signal) {
-  console.log(`[SFERLE TMS PRO] Oprire controlată (${signal})...`)
+  console.log(`[Blue Trans Spedition] Oprire controlată (${signal})...`)
   server.close(() => {
     process.exit(0)
   })

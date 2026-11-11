@@ -33,6 +33,7 @@ import {
 import { GoogleMapsAddressInput } from './GoogleMapsAddressInput';
 import {
   FLEET_VIN_DATABASE,
+  FleetBoardExternalFilter,
   FleetVinPair,
   MasinileMeleItem,
   decodeVinNumber,
@@ -49,6 +50,7 @@ import {
 interface TmsOperationsViewProps {
   trailers: TrailerUnit[];
   subTab: string;
+  fleetJumpFilter?: FleetBoardExternalFilter | null;
 }
 
 export interface ExtendedFleetTechRecord {
@@ -274,11 +276,13 @@ const INITIAL_INVOICES: InvoiceRecord[] = [
 export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
   trailers,
   subTab,
+  fleetJumpFilter,
 }) => {
   const [section, setSection] = useState<
     'fleet' | 'tacho' | 'clients' | 'invoicing'
   >(() => {
     if (subTab === 'clients') return 'clients';
+    if (fleetJumpFilter) return 'fleet';
     try {
       const saved = localStorage.getItem('bluetrans_tms_section_v1');
       if (saved === 'tacho' || saved === 'invoicing' || saved === 'fleet') return saved;
@@ -304,6 +308,12 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
       setSection('fleet');
     }
   }, [subTab]);
+
+  useEffect(() => {
+    if (fleetJumpFilter) {
+      setSection('fleet');
+    }
+  }, [fleetJumpFilter?.nonce]);
 
   // 1. Fleet Technical Specs State (persisted in localStorage)
   const [fleetTechMap, setFleetTechMap] = useState<
@@ -656,7 +666,7 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
                     inline: 'nearest',
                   });
                 }}
-                className="h-9 px-4 rounded-full tahoe-btn-secondary text-xs font-bold text-white/80 hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer"
+                className="tps-nav-tab-btn h-9 px-4 rounded-full tahoe-btn-secondary text-xs font-bold text-white/80 hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Icon className="w-3.5 h-3.5 shrink-0" />
                 <span>{tab.label}</span>
@@ -687,6 +697,7 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
         <div className="space-y-5">
           {/* "Mașinile mele" Fleet Board (Exact visual layout with 3/4 Truck & Schmitz Trailer renders + ITP/ROV/RCA/Licență blocks & popup modal) */}
           <MasinileMeleFleetBoard
+            externalFilter={fleetJumpFilter}
             onOpenVehicleDossier={(trailerId, initialTab, customItem) =>
               setSelectedDossier({ trailerId, initialTab, customItem })
             }
