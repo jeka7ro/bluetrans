@@ -161,10 +161,77 @@ export const LoginView: React.FC<LoginViewProps> = ({
   return (
     <div
       data-theme={theme}
-      className="min-h-dvh tahoe-wallpaper text-[#f5f5f7] flex flex-col p-4 sm:p-6 transition-colors duration-200"
+      className="login-highway-stage relative min-h-dvh overflow-hidden text-[#f5f5f7] flex flex-col p-3.5 sm:p-6 transition-colors duration-300"
     >
+      {/* Realistic European Highway Fleet Backdrop (Dark Night Corridor vs Sunny Day Alpine Corridor) */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-0 select-none overflow-hidden"
+      >
+        {/* Dark Mode Highway Scene */}
+        <picture
+          className={`absolute inset-0 block w-full h-full transition-opacity duration-300 ${
+            theme === 'dark' ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <source
+            media="(max-width: 767px)"
+            srcSet="/login/highway-dark-mobile-1x.webp 1x, /login/highway-dark-mobile-2x.webp 2x"
+            type="image/webp"
+          />
+          <source
+            media="(min-width: 768px)"
+            srcSet="/login/highway-dark-desktop-1x.webp?v=drpciv5 1x, /login/highway-dark-desktop-2x.webp?v=drpciv5 2x"
+            type="image/webp"
+          />
+          <img
+            src="/login/highway-dark-desktop-2x.webp?v=drpciv5"
+            alt=""
+            width={2560}
+            height={1440}
+            decoding="async"
+            {...(theme === 'dark'
+              ? { fetchPriority: 'high' as const }
+              : { fetchPriority: 'low' as const, loading: 'lazy' as const })}
+            className="w-full h-full object-cover object-[50%_18%] md:object-[55%_52%]"
+          />
+        </picture>
+
+        {/* Light Mode Daytime Highway Scene */}
+        <picture
+          className={`absolute inset-0 block w-full h-full transition-opacity duration-300 ${
+            theme === 'light' ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <source
+            media="(max-width: 767px)"
+            srcSet="/login/highway-light-mobile-1x.webp 1x, /login/highway-light-mobile-2x.webp 2x"
+            type="image/webp"
+          />
+          <source
+            media="(min-width: 768px)"
+            srcSet="/login/highway-light-desktop-1x.webp?v=drpciv5 1x, /login/highway-light-desktop-2x.webp?v=drpciv5 2x"
+            type="image/webp"
+          />
+          <img
+            src="/login/highway-light-desktop-2x.webp?v=drpciv5"
+            alt=""
+            width={2560}
+            height={1440}
+            decoding="async"
+            {...(theme === 'light'
+              ? { fetchPriority: 'high' as const }
+              : { fetchPriority: 'low' as const, loading: 'lazy' as const })}
+            className="w-full h-full object-cover object-[50%_8%] md:object-[36%_50%]"
+          />
+        </picture>
+
+        {/* Directional readability scrim that keeps the BLUE TRANS SPEDITION truck 100% crisp & uncovered */}
+        <div className="login-highway-scrim absolute inset-0" />
+      </div>
+
       {/* Top-right compact controls */}
-      <div className="w-full flex items-center justify-end gap-2">
+      <div className="relative z-10 w-full flex items-center justify-end gap-2">
         <LanguageToggleBar />
         <button
           type="button"
@@ -175,7 +242,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
           title={
             theme === 'dark' ? 'Comută pe Modul Luminos' : 'Comută pe Modul Întunecat'
           }
-          className="w-9 h-9 rounded-full tahoe-btn-secondary flex items-center justify-center transition cursor-pointer"
+          className="login-top-pill w-9 h-9 rounded-full tahoe-btn-secondary flex items-center justify-center transition cursor-pointer"
         >
           {theme === 'dark' ? (
             <Sun className="w-4 h-4 text-[#FF9F0A]" />
@@ -185,15 +252,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
         </button>
       </div>
 
-      {/* Classic Centered Card */}
-      <div className="flex-1 flex items-center justify-center py-6">
-        <div className="w-full max-w-[390px] tahoe-glass-elevated rounded-[28px] p-7 sm:p-8 border border-white/15">
+      {/* Responsive Frosted Glass Login Card — anchored bottom on mobile & right on desktop so the branded highway trucks stay 100% visible */}
+      <div className="relative z-10 flex-1 flex items-end md:items-center justify-center md:justify-end pt-36 pb-1 sm:py-6 md:pr-3 lg:pr-5 xl:pr-14">
+        <div className="login-auth-glass w-full max-w-[390px] md:max-w-[366px] xl:max-w-[390px] tahoe-glass-elevated rounded-[26px] sm:rounded-[28px] p-5 sm:p-7 xl:p-8 border border-white/20">
           {/* Brand Logo */}
-          <div className="flex flex-col items-center mb-6">
-            <DynamicBrandLogo height={68} />
+          <div className="flex flex-col items-center mb-4 sm:mb-6">
+            <DynamicBrandLogo height={60} />
             <h1
               id="auth-card-heading"
-              className="mt-4 text-xl font-extrabold text-white tracking-tight"
+              className="mt-2.5 sm:mt-4 text-lg sm:text-xl font-extrabold text-white tracking-tight"
             >
               {inviteToken ? 'Activare cont' : 'Autentificare'}
             </h1>

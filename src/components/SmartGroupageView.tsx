@@ -97,21 +97,20 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      {/* Header — macOS Tahoe Glass */}
-      <div className="tahoe-glass rounded-[28px] p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div>
-          <h1 className="text-lg sm:text-2xl font-bold text-white tracking-tight mt-1.5">
-            Grupaje & disponibilități
-          </h1>
-        </div>
+    <div className="space-y-3 sm:space-y-6">
+      {/* Header — single compact row on mobile, unchanged on desktop */}
+      <div className="tahoe-glass rounded-[22px] sm:rounded-[28px] p-3 sm:p-6 flex flex-row items-center justify-between gap-2 sm:gap-4">
+        <h1 className="text-base sm:text-2xl font-bold text-white tracking-tight truncate">
+          Grupaje &amp; disponibilități
+        </h1>
 
         <button
           onClick={onNavigateToOffers}
-          className="tahoe-btn-primary px-5 py-2.5 rounded-full text-xs flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+          className="tahoe-btn-primary px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-[11px] sm:text-xs flex items-center justify-center gap-1.5 sm:gap-2 shrink-0 cursor-pointer"
         >
-          <Mail className="w-4 h-4" />
-          Trimite Oferte Automate →
+          <Mail className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+          <span className="sm:hidden">Oferte →</span>
+          <span className="hidden sm:inline">Trimite Oferte Automate →</span>
         </button>
       </div>
 
@@ -128,38 +127,40 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
       )}
 
       {/* SECTION 1: 8-CRITERIA MULTI-VARIANT COMPARATOR */}
-      <div className="tahoe-glass rounded-[28px] p-4 sm:p-6 space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-white/[0.08] pb-4">
+      <div className="tahoe-glass rounded-[24px] sm:rounded-[28px] p-3.5 sm:p-6 space-y-3 sm:space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 sm:gap-3 border-b border-white/[0.08] pb-3 sm:pb-4">
           <div>
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-[#64D2FF] flex items-center gap-1.5">
-              <GitCompare className="w-3.5 h-3.5" />
+            <span className="text-[10.5px] sm:text-[11px] font-semibold uppercase tracking-wider text-[#64D2FF] flex items-center gap-1.5">
+              <GitCompare className="w-3.5 h-3.5 shrink-0" />
               Comparator Multi-Variantă (8 Criterii)
             </span>
-            <h2 className="text-base sm:text-lg font-bold text-white mt-0.5">
+            <h2 className="hidden sm:block text-base sm:text-lg font-bold text-white mt-0.5">
               Compară variantele compatibile înainte de confirmare
             </h2>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 gap-1.5 w-full sm:w-auto sm:flex sm:flex-wrap sm:items-center sm:gap-2">
             <button
               onClick={() => setSelectedOrderForComparison('CMD-951')}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition cursor-pointer ${
+              className={`min-w-0 px-2.5 sm:px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold truncate transition cursor-pointer ${
                 selectedOrderForComparison === 'CMD-951'
                   ? 'bg-[#0A84FF] text-white shadow-md'
                   : 'bg-white/[0.06] text-white/70 hover:text-white'
               }`}
             >
-              CMD-951: Viena → Rotterdam (3 LDM)
+              <span className="sm:hidden">CMD-951 · 3 LDM</span>
+              <span className="hidden sm:inline">CMD-951: Viena → Rotterdam (3 LDM)</span>
             </button>
             <button
               onClick={() => setSelectedOrderForComparison('CMD-954')}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition cursor-pointer ${
+              className={`min-w-0 px-2.5 sm:px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold truncate transition cursor-pointer ${
                 selectedOrderForComparison === 'CMD-954'
                   ? 'bg-[#0A84FF] text-white shadow-md'
                   : 'bg-white/[0.06] text-white/70 hover:text-white'
               }`}
             >
-              CMD-954: München → Almere (2 LDM)
+              <span className="sm:hidden">CMD-954 · 2 LDM</span>
+              <span className="hidden sm:inline">CMD-954: München → Almere (2 LDM)</span>
             </button>
           </div>
         </div>
@@ -378,23 +379,26 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
             Sugestii de Marfă pentru Spațiul Liber ({trailersWithUnusedSpace.length} remorci)
           </h2>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          <div className="grid grid-cols-4 gap-1.5 w-full sm:w-auto sm:flex sm:items-center sm:gap-1.5 sm:overflow-x-auto no-scrollbar">
             {[
-              { id: 'ALL', label: 'Toate (4)' },
-              { id: 'Comandă Internă', label: 'Interne' },
-              { id: 'Client Recurent', label: 'Clienți Recurenți' },
-              { id: 'Bursă (TimoCom / Trans.eu)', label: 'Burse' },
+              { id: 'ALL', label: 'Toate (4)', mobileLabel: 'Toate (4)' },
+              { id: 'Comandă Internă', label: 'Interne', mobileLabel: 'Interne' },
+              { id: 'Client Recurent', label: 'Clienți Recurenți', mobileLabel: 'Recurenți' },
+              { id: 'Bursă (TimoCom / Trans.eu)', label: 'Burse', mobileLabel: 'Burse' },
             ].map((tab) => (
               <button
                 key={tab.id}
+                type="button"
+                aria-pressed={sourceFilter === tab.id}
                 onClick={() => setSourceFilter(tab.id)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
+                className={`min-w-0 w-full sm:w-auto min-h-[36px] sm:min-h-0 px-2 sm:px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold flex items-center justify-center whitespace-nowrap transition cursor-pointer border ${
                   sourceFilter === tab.id
-                    ? 'bg-[#0A84FF] text-white'
-                    : 'bg-white/[0.06] text-white/65 hover:text-white'
+                    ? 'bg-[#0A84FF] border-[#0A84FF] text-white'
+                    : 'bg-white/[0.06] border-transparent text-white/65 hover:text-white'
                 }`}
               >
-                {tab.label}
+                <span className="sm:hidden truncate">{tab.mobileLabel}</span>
+                <span className="hidden sm:inline">{tab.label}</span>
               </button>
             ))}
           </div>

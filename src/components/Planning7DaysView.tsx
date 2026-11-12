@@ -24,12 +24,15 @@ import {
   LocateFixed,
   Loader2,
   ExternalLink,
+  ArrowRight,
   X,
 } from 'lucide-react';
 import {
   findFirstFuturePlanningSlot,
+  formatPlanningOrderPosition,
   formatRomaniaClockSnapshot,
   getDefaultPlanningWeekOffset,
+  getPlanningOrderNumber,
   getPlanningWeekMeta,
   getRomaniaZonedNow,
   isPlanningSlotInPast,
@@ -708,9 +711,6 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
   onUpdateBulkhead,
 }) => {
   const qcFormId = useId();
-  const [selectedTrailerId, setSelectedTrailerId] = useState<string>(
-    initialSelectedTrailerId || trailers[0].id
-  );
   const [roClock, setRoClock] = useState(() =>
     formatRomaniaClockSnapshot(getRomaniaZonedNow())
   );
@@ -727,7 +727,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     ).days.findIndex((d) => d.isToday);
     return todayIdx >= 0 ? todayIdx : 0;
   });
-  const [showBiTempInspector, setShowBiTempInspector] = useState<boolean>(false);
+  const [showMobileEmptyPastSlots, setShowMobileEmptyPastSlots] =
+    useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [decisionOrderId, setDecisionOrderId] = useState<string | null>(null);
   const [lastCreatedCardId, setLastCreatedCardId] = useState<string | null>(null);
@@ -875,6 +876,73 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
   const [hoveredCellKey, setHoveredCellKey] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
 
+  // In-App Confirmation Popup State when moving / reordering a Planning Card
+  const [pendingCardMove, setPendingCardMove] = useState<{
+    card: HourlyPlanningCard;
+    fromWeekOffset: number;
+    fromDayIndex: number;
+    fromDayLabel: string;
+    fromDayDate: string;
+    fromIsToday: boolean;
+    fromHourSlot: string;
+    fromOrderNum: number;
+    toWeekOffset: number;
+    toDayIndex: number;
+    toIsoDate: string;
+    toDayShort: string;
+    toDayLabel: string;
+    toDayDate: string;
+    toIsToday: boolean;
+    toIsPastDay: boolean;
+    toHourSlot: string;
+    toOrderNum: number;
+    swapWithCard?: HourlyPlanningCard;
+  } | null>(null);
+  const moveDialogRef = React.useRef<HTMLDialogElement | null>(null);
+  const moveDialogTitleId = useId();
+
+  useEffect(() => {
+    const dialog = moveDialogRef.current;
+    if (!dialog) return;
+    if (pendingCardMove) {
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [pendingCardMove]);
+
+  useEffect(() => {
+    const dialog = moveDialogRef.current;
+    if (!dialog || 'closedBy' in HTMLDialogElement.prototype) return;
+    const outside = (e: PointerEvent) => {
+      const r = dialog.getBoundingClientRect();
+      return (
+        e.clientX < r.left ||
+        e.clientX > r.right ||
+        e.clientY < r.top ||
+        e.clientY > r.bottom
+      );
+    };
+    let pressedOutside = false;
+    const onPointerDown = (e: PointerEvent) => {
+      pressedOutside = outside(e);
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (pressedOutside && outside(e) && dialog.open) {
+        dialog.close();
+      }
+      pressedOutside = false;
+    };
+    dialog.addEventListener('pointerdown', onPointerDown);
+    dialog.addEventListener('pointerup', onPointerUp);
+    return () => {
+      dialog.removeEventListener('pointerdown', onPointerDown);
+      dialog.removeEventListener('pointerup', onPointerUp);
+    };
+  }, []);
+
   // Full Course & Order Detail Modal State (when clicking any card in Planning)
   const [selectedCardDetail, setSelectedCardDetail] =
     useState<HourlyPlanningCard | null>(null);
@@ -895,7 +963,9 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
   const [qcPallets, setQcPallets] = useState('9');
   const [qcTemp, setQcTemp] = useState('4');
   const [qcRevenue, setQcRevenue] = useState('680');
-  const [qcTrailerId, setQcTrailerId] = useState('BH 67 STS');
+  const [qcTrailerId, setQcTrailerId] = useState(
+    initialSelectedTrailerId || 'BH 67 STS'
+  );
   const [qcTractorId, setQcTractorId] = useState('BH 46 STS');
   const realFleet = React.useMemo(() => getRealFleet(), []);
   const idleTrailers = realFleet.trailers.filter((v) => !trailers.some((t) => t.id === v.plate));
@@ -930,9 +1000,6 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     }
   };
 
-  const selectedTrailer =
-    trailers.find((t) => t.id === selectedTrailerId) || trailers[0];
-
   // Lock background page scroll whenever a modal is open
   useEffect(() => {
     const isAnyModalOpen = Boolean(selectedCardDetail || quickCreateCell || printableDoc);
@@ -949,6 +1016,125 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     };
   }, [selectedCardDetail, quickCreateCell, printableDoc]);
 
+  // Open In-App Confirmation Popup before moving or reordering a Planning Card
+  const requestCardMoveConfirmation = (
+    sourceCard: HourlyPlanningCard,
+    targetWeekOffset: number,
+    targetDayIdx: number,
+    targetHour: string,
+    explicitSwapCard?: HourlyPlanningCard
+  ) => {
+    const freshNow = getRomaniaZonedNow();
+    const fromWeekOffset = sourceCard.weekOffset ?? 0;
+    if (
+      fromWeekOffset === targetWeekOffset &&
+      sourceCard.dayIndex === targetDayIdx &&
+      sourceCard.hourSlot === targetHour
+    ) {
+      return;
+    }
+
+    const sourceWeekMeta = getPlanningWeekMeta(fromWeekOffset, freshNow);
+    const sourceDayMeta = sourceWeekMeta.days[sourceCard.dayIndex];
+    const targetWeekMeta = getPlanningWeekMeta(targetWeekOffset, freshNow);
+    const targetDayMeta = targetWeekMeta.days[targetDayIdx];
+    if (!targetDayMeta) return;
+
+    const isSameDayReorder =
+      fromWeekOffset === targetWeekOffset &&
+      sourceCard.dayIndex === targetDayIdx;
+
+    let swapWithCard: HourlyPlanningCard | undefined = explicitSwapCard;
+    if (!swapWithCard && isSameDayReorder) {
+      const targetCellCards = cards.filter(
+        (c) =>
+          c.id !== sourceCard.id &&
+          (c.weekOffset ?? 0) === targetWeekOffset &&
+          c.dayIndex === targetDayIdx &&
+          c.hourSlot === targetHour
+      );
+      if (targetCellCards.length === 1) {
+        swapWithCard = targetCellCards[0];
+      }
+    }
+
+    setPendingCardMove({
+      card: sourceCard,
+      fromWeekOffset,
+      fromDayIndex: sourceCard.dayIndex,
+      fromDayLabel:
+        sourceDayMeta?.label ?? WEEK_DAYS[sourceCard.dayIndex]?.label ?? 'Zi',
+      fromDayDate:
+        sourceDayMeta?.date ?? WEEK_DAYS[sourceCard.dayIndex]?.date ?? '',
+      fromIsToday: Boolean(sourceDayMeta?.isToday),
+      fromHourSlot: sourceCard.hourSlot,
+      fromOrderNum: getPlanningOrderNumber(sourceCard.hourSlot),
+      toWeekOffset: targetWeekOffset,
+      toDayIndex: targetDayIdx,
+      toIsoDate: targetDayMeta.isoDate,
+      toDayShort: targetDayMeta.short,
+      toDayLabel: targetDayMeta.label,
+      toDayDate: targetDayMeta.date,
+      toIsToday: targetDayMeta.isToday,
+      toIsPastDay: targetDayMeta.isPastDay,
+      toHourSlot: targetHour,
+      toOrderNum: getPlanningOrderNumber(targetHour),
+      swapWithCard,
+    });
+  };
+
+  // Apply Confirmed Card Move / Order Swap
+  const applyConfirmedCardMove = (
+    move: NonNullable<typeof pendingCardMove>
+  ) => {
+    const fromIsoResolved =
+      move.card.isoDate ||
+      getPlanningWeekMeta(move.fromWeekOffset, getRomaniaZonedNow()).days[
+        move.fromDayIndex
+      ]?.isoDate;
+
+    const movedPrimary: HourlyPlanningCard = {
+      ...move.card,
+      weekOffset: move.toWeekOffset,
+      isoDate: move.toIsoDate,
+      dayIndex: move.toDayIndex,
+      hourSlot: move.toHourSlot,
+      completed: move.toIsPastDay ? move.card.completed : false,
+    };
+
+    setCards((prev) =>
+      prev.map((c) => {
+        if (c.id === move.card.id) {
+          return movedPrimary;
+        }
+        if (move.swapWithCard && c.id === move.swapWithCard.id) {
+          return {
+            ...c,
+            weekOffset: move.fromWeekOffset,
+            isoDate: fromIsoResolved ?? c.isoDate,
+            dayIndex: move.fromDayIndex,
+            hourSlot: move.fromHourSlot,
+          };
+        }
+        return c;
+      })
+    );
+
+    if (selectedCardDetail?.id === move.card.id) {
+      setSelectedCardDetail(movedPrimary);
+    }
+
+    if (move.swapWithCard) {
+      setToastMessage(
+        `Ordinea comenzilor actualizată pe ${move.toDayShort} ${move.toDayDate}: „${move.card.clientName}” → Ordinea #${move.toOrderNum} (schimb cu „${move.swapWithCard.clientName}” → Ordinea #${move.fromOrderNum}).`
+      );
+    } else {
+      setToastMessage(
+        `Comanda „${move.card.clientName}” (${move.card.ldm} LDM) a fost mutată pe ${move.toDayShort} ${move.toDayDate}${move.toIsToday ? ' (AZI)' : ''} · Ordinea #${move.toOrderNum}!`
+      );
+    }
+  };
+
   // Drop handler on a Calendar Cell (dayIndex, hourSlot)
   const handleDropOnCell = (targetDayIdx: number, targetHour: string) => {
     setHoveredCellKey(null);
@@ -961,38 +1147,20 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
       isPlanningSlotInPast(targetDayMeta.isoDate, targetHour, freshNow);
 
     if (dragPayload.kind === 'CARD') {
-      if (targetIsPast) {
-        const snap = formatRomaniaClockSnapshot(freshNow);
-        setToastMessage(
-          `Nu poți muta cursa pe o dată/oră din trecut (${targetDayMeta?.label ?? ''} ${targetDayMeta?.date ?? ''} · ora ${targetHour} — Ora României: ${snap.dateCompact}, ${snap.timeShort}).`
-        );
-        setDragPayload(null);
-        return;
-      }
-      setCards((prev) =>
-        prev.map((c) =>
-          c.id === dragPayload.id
-            ? {
-                ...c,
-                weekOffset,
-                isoDate: targetDayMeta.isoDate,
-                dayIndex: targetDayIdx,
-                hourSlot: targetHour,
-              }
-            : c
-        )
-      );
-      const moved = cards.find((c) => c.id === dragPayload.id);
-      if (moved) {
-        setToastMessage(
-          `Cursa "${moved.clientName}" (${moved.ldm} LDM) a fost mutată pe ${targetDayMeta.short} ${targetDayMeta.date} la ora ${targetHour}!`
+      const sourceCard = cards.find((c) => c.id === dragPayload.id);
+      if (sourceCard && targetDayMeta) {
+        requestCardMoveConfirmation(
+          sourceCard,
+          weekOffset,
+          targetDayIdx,
+          targetHour
         );
       }
     } else if (dragPayload.kind === 'PENDING_ORDER') {
       if (targetIsPast) {
         const snap = formatRomaniaClockSnapshot(freshNow);
         setToastMessage(
-          `Nu poți planifica o comandă nouă în trecut (${targetDayMeta?.label ?? ''} ${targetDayMeta?.date ?? ''} · ora ${targetHour} — Ora României: ${snap.dateCompact}, ${snap.timeShort}). Trage comanda pe o celulă viitoare!`
+          `Nu poți planifica o comandă nouă pe o zi deja încheiată (${targetDayMeta?.label ?? ''} ${targetDayMeta?.date ?? ''} — Data curentă: ${snap.dateCompact}). Trage comanda pe ziua de azi sau pe o zi următoare!`
         );
         setDragPayload(null);
         return;
@@ -1017,11 +1185,11 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
         );
         setLastCreatedCardId(`card-ord-${order.id}`);
         setToastMessage(
-          `Comanda în așteptare "${order.client}" (${order.ldm} LDM) a fost planificată pe ${targetDayMeta.short} ${targetDayMeta.date} la ora ${targetHour} pe ${assignedTrailer.id}!`
+          `Comanda în așteptare "${order.client}" (${order.ldm} LDM) a fost planificată pe ${targetDayMeta.short} ${targetDayMeta.date} · ${formatPlanningOrderPosition(targetHour)} pe ${assignedTrailer.id}!`
         );
       }
     } else if (dragPayload.kind === 'TRUCK') {
-      // If user drops a truck on a cell that already has a card, assign truck to that card; otherwise open quick create ONLY if slot is in future
+      // If user drops a truck on a cell that already has a card, assign truck to that card; otherwise open quick create ONLY if day is today or future
       const existingCard = cards.find(
         (c) =>
           (c.weekOffset ?? 0) === weekOffset &&
@@ -1048,7 +1216,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
         if (targetIsPast) {
           const snap = formatRomaniaClockSnapshot(freshNow);
           setToastMessage(
-            `Nu poți deschide o cursă nouă în trecut (${targetDayMeta?.label ?? ''} ${targetDayMeta?.date ?? ''} · ora ${targetHour} — Ora României: ${snap.dateCompact}, ${snap.timeShort}).`
+            `Nu poți deschide o cursă nouă pe o zi deja încheiată (${targetDayMeta?.label ?? ''} ${targetDayMeta?.date ?? ''} — Data curentă: ${snap.dateCompact}).`
           );
         } else {
           setQcTrailerId(trailerObj.id);
@@ -1065,8 +1233,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     setDragPayload(null);
   };
 
-  // Drop a Truck directly onto a Card
-  const handleDropTruckOnCard = (
+  // Drop a Truck or another Card directly onto an existing Card
+  const handleDropOnCard = (
     e: React.DragEvent,
     targetCard: HourlyPlanningCard
   ) => {
@@ -1091,8 +1259,26 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
         setToastMessage(
           `Camionul ${trailerObj.id} (${trailerObj.driver1.name}) a fost asociat cu succes pe lucrarea "${targetCard.clientName}" (${targetCard.ldm} LDM)!`
         );
-        setDragPayload(null);
       }
+      setDragPayload(null);
+      return;
+    }
+
+    if (dragPayload?.kind === 'CARD' && dragPayload.id !== targetCard.id) {
+      const sourceCard = cards.find((c) => c.id === dragPayload.id);
+      if (sourceCard) {
+        const isSameDay =
+          (sourceCard.weekOffset ?? 0) === (targetCard.weekOffset ?? 0) &&
+          sourceCard.dayIndex === targetCard.dayIndex;
+        requestCardMoveConfirmation(
+          sourceCard,
+          targetCard.weekOffset ?? weekOffset,
+          targetCard.dayIndex,
+          targetCard.hourSlot,
+          isSameDay ? targetCard : undefined
+        );
+      }
+      setDragPayload(null);
     }
   };
 
@@ -1123,7 +1309,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
       const nextDayLabel =
         getPlanningWeekMeta(nextValid.weekOffset, freshNow).days[nextValid.dayIndex];
       setQcError(
-        `Data sau ora selectată a trecut deja în fusul orar al României. Slotul a fost actualizat automat la ${nextDayLabel.label} (${nextDayLabel.date}) · ora ${nextValid.hourSlot}. Apasă din nou „Salvează Cursa”.`
+        `Ziua selectată s-a încheiat deja. Poziția a fost actualizată automat la ${nextDayLabel.label} (${nextDayLabel.date}) · ${formatPlanningOrderPosition(nextValid.hourSlot)}. Apasă din nou „Salvează Cursa”.`
       );
       return;
     }
@@ -1195,7 +1381,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     setQuickCreateCell(null);
     setLastCreatedCardId(created.id);
     setToastMessage(
-      `Cursa "${created.clientName}" (${created.ldm} LDM · ${revNum} €) a fost salvată pe ${submitDayMeta.short} ${submitDayMeta.date} (${created.hourSlot}) pe ${created.trailerId} și sincronizată automat în Control Center și Comenzi & curse!`
+      `Cursa "${created.clientName}" (${created.ldm} LDM · ${revNum} €) a fost salvată pe ${submitDayMeta.short} ${submitDayMeta.date} (${formatPlanningOrderPosition(created.hourSlot)}) pe ${created.trailerId} și sincronizată automat în Control Center și Comenzi & curse!`
     );
   };
 
@@ -1247,7 +1433,10 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
       ? 'https://tile.openstreetmap.org/8/135/82.png'
       : 'https://tile.openstreetmap.org/8/131/84.png';
 
-    const isTruckHovered = hoveredCardId === card.id && dragPayload?.kind === 'TRUCK';
+    const isDropHovered =
+      hoveredCardId === card.id &&
+      (dragPayload?.kind === 'TRUCK' ||
+        (dragPayload?.kind === 'CARD' && dragPayload.id !== card.id));
     const matchedTrailer = trailers.find((t) => t.id === card.trailerId);
     const tractorPlate =
       card.tractorPlate ??
@@ -1269,23 +1458,30 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
           e.stopPropagation();
           setDragPayload({ kind: 'CARD', id: card.id });
         }}
+        onDragEnd={() => {
+          setDragPayload(null);
+          setHoveredCellKey(null);
+          setHoveredCardId(null);
+        }}
         onDragOver={(e) => {
-          if (dragPayload?.kind === 'TRUCK') {
+          if (
+            dragPayload?.kind === 'TRUCK' ||
+            (dragPayload?.kind === 'CARD' && dragPayload.id !== card.id)
+          ) {
             e.preventDefault();
             e.stopPropagation();
             setHoveredCardId(card.id);
           }
         }}
         onDragLeave={() => setHoveredCardId(null)}
-        onDrop={(e) => handleDropTruckOnCard(e, card)}
+        onDrop={(e) => handleDropOnCard(e, card)}
         onClick={(e) => {
           e.stopPropagation();
-          setSelectedTrailerId(card.trailerId);
           setSelectedCardDetail(card);
         }}
         className={`planning-trip-card relative rounded-2xl cursor-grab active:cursor-grabbing overflow-hidden select-none h-[196px] w-full flex flex-col ${
-          isPastCard ? 'border-dashed border-2 opacity-80' : ''
-        } ${isTruckHovered ? 'ring-2 ring-[#0A84FF] scale-[1.02]' : ''} ${
+          isPastCard ? 'border-dashed border-2' : ''
+        } ${isDropHovered ? 'ring-2 ring-[#0A84FF] scale-[1.02]' : ''} ${
           isJustCreated ? 'ring-2 ring-[#30D158] shadow-lg shadow-[#30D158]/25' : ''
         }`}
       >
@@ -1306,13 +1502,14 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
           </div>
 
           <span
-            className={`px-1.5 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-tight shrink-0 leading-none border ${
+            data-status={
               isPastCard
-                ? 'bg-emerald-950/55 text-emerald-200 border-emerald-300/45'
+                ? 'past'
                 : cardLife.lifecycle === 'planned'
-                  ? 'bg-amber-950/55 text-amber-200 border-amber-300/45'
-                  : 'bg-sky-950/55 text-sky-100 border-white/35'
-            }`}
+                  ? 'planned'
+                  : 'active'
+            }
+            className="planning-status-badge px-2 py-[3px] rounded-full text-[9.5px] font-extrabold uppercase tracking-[0.01em] shrink-0 leading-none"
           >
             {isPastCard
               ? '✓ Trecută'
@@ -1478,110 +1675,125 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
         <div className="w-full space-y-4">
           {/* Planning Calendar Card — Unified macOS Tahoe Glass Surface */}
           <div className="tahoe-glass rounded-[26px] overflow-hidden">
-            {/* Top Header Bar */}
-            <div className="bg-gradient-to-r from-[#0A84FF]/30 via-[#0284c7]/25 to-[#5E5CE6]/30 border-b border-white/15 px-4 sm:px-6 py-3.5 text-white flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <h1 className="text-lg sm:text-xl font-extrabold tracking-tight uppercase text-white">
-                  {weekMeta.monthYearTitle}
-                </h1>
-                <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 border border-white/20 text-xs font-semibold text-white">
-                  <Calendar className="w-3.5 h-3.5 text-[#64D2FF]" />
-                  <span>Click pe celulele viitoare pt. Creare Rapidă · Drag & Drop activ</span>
-                </span>
+            {/* Top Header Bar — Clean single-row toolbar on Desktop, compact 2-row layout on Mobile */}
+            <div className="planning-toolbar-header px-3.5 sm:px-5 py-2.5 sm:py-3 text-white flex flex-col sm:flex-row sm:flex-wrap lg:flex-nowrap items-stretch sm:items-center justify-between gap-2.5">
+              <div className="flex items-center justify-between sm:justify-start gap-1.5 sm:gap-3 min-w-0">
+                <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+                  <Calendar
+                    className="w-4 h-4 text-[#64D2FF] shrink-0 hidden sm:block"
+                    aria-hidden="true"
+                  />
+                  <h1 className="text-[13.5px] sm:text-lg font-extrabold tracking-tight uppercase text-white whitespace-nowrap shrink-0">
+                    {weekMeta.monthYearTitle}
+                  </h1>
+
+                  <div className="flex items-center tahoe-btn-secondary rounded-full px-0.5 sm:px-1 py-0.5 text-[11px] sm:text-xs font-bold text-white shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffset((w) => Math.max(0, w - 1))}
+                      disabled={weekOffset === 0}
+                      aria-label="Săptămâna anterioară"
+                      className="p-1 rounded-full hover:bg-white/10 disabled:opacity-35 cursor-pointer disabled:cursor-not-allowed transition"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    </button>
+                    <span className="sm:hidden px-1 tabular-nums whitespace-nowrap">
+                      {weekMeta.rangeLabel.replace(/\s+\d{4}$/, '')}
+                    </span>
+                    <span className="hidden sm:inline px-2 tabular-nums whitespace-nowrap">
+                      {weekMeta.rangeLabel}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffset((w) => w + 1)}
+                      aria-label="Săptămâna următoare"
+                      className="p-1 rounded-full hover:bg-white/10 cursor-pointer transition"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    </button>
+                  </div>
+
+                  {weekOffset > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffset(0)}
+                      className="hidden md:inline-flex px-2.5 py-1 rounded-full tahoe-btn-secondary text-[11px] font-bold text-[#64D2FF] cursor-pointer whitespace-nowrap"
+                    >
+                      Săpt. curentă
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => openQuickCreateModal()}
+                  className="sm:hidden px-3 py-1.5 rounded-full tahoe-btn-primary text-[11px] font-extrabold text-white inline-flex items-center gap-1 shadow-md transition cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Cursă</span>
+                </button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center justify-between sm:justify-end gap-2 min-w-0">
                 {/* Segmented Filter: Toate | Active | Trecute */}
                 <div
                   role="group"
                   aria-label="Filtru stare curse în calendar"
-                  className="inline-flex items-center gap-1 p-1 rounded-full bg-black/20 border border-white/15"
+                  className="w-full grid grid-cols-3 sm:w-auto sm:inline-flex items-center gap-1 p-1 rounded-full bg-black/20 border border-white/15"
                 >
                   <button
                     type="button"
                     aria-pressed={cardStatusFilter === 'all'}
                     onClick={() => setCardStatusFilter('all')}
-                    className={`px-3 py-1 rounded-full text-xs font-extrabold cursor-pointer border ${
+                    className={`min-w-0 px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-extrabold inline-flex items-center justify-center whitespace-nowrap cursor-pointer border ${
                       cardStatusFilter === 'all'
                         ? 'bg-[#0A84FF] text-white border-[#64D2FF]/50 shadow-xs'
                         : 'border-transparent text-white/70 hover:text-white'
                     }`}
                   >
-                    Toate ({weekFilterCounts.all})
+                    <span className="truncate">Toate ({weekFilterCounts.all})</span>
                   </button>
                   <button
                     type="button"
                     aria-pressed={cardStatusFilter === 'active'}
                     onClick={() => setCardStatusFilter('active')}
-                    className={`px-3 py-1 rounded-full text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer border ${
+                    className={`min-w-0 px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-extrabold inline-flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap cursor-pointer border ${
                       cardStatusFilter === 'active'
                         ? 'bg-[#0A84FF] text-white border-[#64D2FF]/50 shadow-xs'
                         : 'border-transparent text-white/70 hover:text-white'
                     }`}
                   >
                     <Radio className="w-3 h-3 shrink-0" aria-hidden="true" />
-                    <span>Active ({weekFilterCounts.active})</span>
+                    <span className="truncate">Active ({weekFilterCounts.active})</span>
                   </button>
                   <button
                     type="button"
                     aria-pressed={cardStatusFilter === 'past'}
                     onClick={() => setCardStatusFilter('past')}
-                    className={`px-3 py-1 rounded-full text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer border ${
+                    className={`min-w-0 px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-extrabold inline-flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap cursor-pointer border ${
                       cardStatusFilter === 'past'
                         ? 'bg-emerald-600 text-white border-emerald-300/50 shadow-xs'
                         : 'border-transparent text-white/70 hover:text-white'
                     }`}
                   >
                     <CheckCircle2 className="w-3 h-3 shrink-0" aria-hidden="true" />
-                    <span>Trecute ({weekFilterCounts.past})</span>
+                    <span className="truncate">Trecute ({weekFilterCounts.past})</span>
                   </button>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => openQuickCreateModal()}
-                  className="px-4 py-1.5 rounded-full tahoe-btn-primary text-xs font-extrabold text-white flex items-center gap-1.5 shadow-md transition cursor-pointer"
+                  className="hidden sm:inline-flex px-4 py-1.5 rounded-full tahoe-btn-primary text-xs font-extrabold text-white items-center gap-1.5 shadow-md transition cursor-pointer shrink-0 whitespace-nowrap"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Cursă nouă</span>
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowBiTempInspector((v) => !v)}
-                  className="px-3.5 py-1.5 rounded-full tahoe-btn-secondary text-xs font-bold text-white flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Sliders className="w-3.5 h-3.5 text-[#64D2FF]" />
-                  <span>Bi-Temp 13.6m ({selectedTrailer.id})</span>
-                </button>
-
-                <div className="flex items-center tahoe-btn-secondary rounded-full px-1.5 py-1 text-xs font-bold text-white">
-                  <button
-                    type="button"
-                    onClick={() => setWeekOffset((w) => Math.max(0, w - 1))}
-                    disabled={weekOffset === 0}
-                    aria-label="Săptămâna anterioară"
-                    className="p-1 rounded-full hover:bg-white/10 disabled:opacity-35 cursor-pointer disabled:cursor-not-allowed transition"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <span className="px-2 tabular-nums whitespace-nowrap">
-                    {weekMeta.rangeLabel}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setWeekOffset((w) => w + 1)}
-                    aria-label="Săptămâna următoare"
-                    className="p-1 rounded-full hover:bg-white/10 cursor-pointer transition"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
               </div>
             </div>
 
-            {/* Mobile Day Selector Bar (Visible on Mobile/Tablet `< lg`) */}
-            <div className="lg:hidden flex items-center gap-1.5 flex-nowrap overflow-x-auto no-scrollbar p-3 border-b border-white/10">
+            {/* Mobile Day Selector Bar (Visible on Mobile/Tablet `< lg` — all 7 days fit on 1 row on mobile) */}
+            <div className="tps-subtab-scroller lg:hidden grid grid-cols-7 gap-1 p-2 sm:flex sm:items-center sm:gap-1.5 sm:flex-nowrap sm:overflow-x-auto no-scrollbar sm:p-3 border-b border-white/10">
               {weekMeta.days.map((d, idx) => {
                 const dayCards = cards.filter(
                   (c) =>
@@ -1594,77 +1806,144 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   <button
                     key={d.isoDate}
                     type="button"
-                    onClick={() => setMobileDayIdx(idx)}
-                    className={`px-3.5 py-2 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${
+                    aria-pressed={mobileDayIdx === idx}
+                    onClick={(e) => {
+                      setMobileDayIdx(idx);
+                      setShowMobileEmptyPastSlots(false);
+                      e.currentTarget.scrollIntoView({
+                        block: 'nearest',
+                        inline: 'center',
+                      });
+                    }}
+                    className={`min-w-0 w-full sm:w-auto px-0.5 py-1.5 sm:px-3.5 sm:py-2 rounded-2xl sm:rounded-full text-xs font-bold whitespace-nowrap sm:shrink-0 transition cursor-pointer border ${
                       mobileDayIdx === idx
-                        ? 'bg-[#0A84FF] text-white shadow'
+                        ? 'bg-[#0A84FF] border-[#0A84FF] text-white shadow'
                         : d.isPastDay
-                          ? 'tahoe-card-inner text-white/45'
-                          : 'tahoe-card-inner text-white/85'
+                          ? 'tahoe-card-inner border-transparent text-white/45'
+                          : 'tahoe-card-inner border-transparent text-white/85'
                     }`}
                   >
-                    <div className="flex items-center gap-1">
-                      <span>
-                        {d.short} {d.dayNum}
+                    {/* Compact 7-column mobile day pill (`< 640px`) */}
+                    <div className="sm:hidden flex flex-col items-center justify-center leading-none">
+                      <span className="text-[9.5px] font-extrabold uppercase tracking-tight opacity-85">
+                        {d.short}
                       </span>
-                      {d.isToday && (
-                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-[#30D158] text-white">
-                          AZI
-                        </span>
-                      )}
+                      <span className="text-[13px] font-black tabular-nums leading-tight mt-0.5">
+                        {d.dayNum}
+                      </span>
+                      <span
+                        className={`text-[8.5px] font-extrabold tabular-nums mt-0.5 px-1 rounded-full ${
+                          d.isToday
+                            ? mobileDayIdx === idx
+                              ? 'bg-white/25 text-white'
+                              : 'bg-[#30D158] text-white'
+                            : 'opacity-80'
+                        }`}
+                      >
+                        {d.isToday
+                          ? 'AZI'
+                          : totalLdm > 0
+                            ? `${totalLdm.toFixed(1)}m`
+                            : '—'}
+                      </span>
                     </div>
-                    <div className="text-[10px] opacity-80 tabular-nums">
-                      {totalLdm.toFixed(1)} LDM
+
+                    {/* Tablet (`640px–1023px`) day pill */}
+                    <div className="hidden sm:block">
+                      <div className="flex items-center gap-1">
+                        <span>
+                          {d.short} {d.dayNum}
+                        </span>
+                        {d.isToday && (
+                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-[#30D158] text-white">
+                            AZI
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] opacity-80 tabular-nums">
+                        {totalLdm.toFixed(1)} LDM
+                      </div>
                     </div>
                   </button>
                 );
               })}
             </div>
 
-            {/* Mobile Day Cards List (`< lg`) */}
+            {/* Mobile Day Cards List (`< lg`) — Order-based positions (#1..#11), auto-collapses empty slots on completed past days */}
             <div className="lg:hidden divide-y divide-white/10">
-              {HOUR_SLOTS.map((hour) => {
-                const mobileDayMeta = weekMeta.days[mobileDayIdx] || weekMeta.days[0];
-                const isMobileSlotPast = isPlanningSlotInPast(
-                  mobileDayMeta.isoDate,
-                  hour,
-                  roClock.zdt
+              {(() => {
+                const mobileDayMeta =
+                  weekMeta.days[mobileDayIdx] || weekMeta.days[0];
+                const slotEntries = HOUR_SLOTS.map((hour) => {
+                  const isMobileSlotPast = isPlanningSlotInPast(
+                    mobileDayMeta.isoDate,
+                    hour,
+                    roClock.zdt
+                  );
+                  const cellCards = cards.filter(
+                    (c) =>
+                      (c.weekOffset ?? 0) === weekOffset &&
+                      c.dayIndex === mobileDayIdx &&
+                      c.hourSlot === hour &&
+                      matchesCardFilter(c)
+                  );
+                  return {
+                    hour,
+                    isMobileSlotPast,
+                    cellCards,
+                    isCellEmpty: cellCards.length === 0,
+                  };
+                });
+
+                const emptyPastSlots = slotEntries.filter(
+                  (entry) => entry.isCellEmpty && entry.isMobileSlotPast
                 );
-                const cellCards = cards.filter(
-                  (c) =>
-                    (c.weekOffset ?? 0) === weekOffset &&
-                    c.dayIndex === mobileDayIdx &&
-                    c.hourSlot === hour &&
-                    matchesCardFilter(c)
-                );
-                const isCellEmpty = cellCards.length === 0;
+                const visibleEntries = showMobileEmptyPastSlots
+                  ? slotEntries
+                  : slotEntries.filter(
+                      (entry) => !(entry.isCellEmpty && entry.isMobileSlotPast)
+                    );
+
                 return (
-                  <div
-                    key={hour}
-                    onClick={() => {
-                      if (!isCellEmpty) return;
-                      if (isMobileSlotPast) {
-                        setToastMessage(
-                          `Nu se poate programa o cursă nouă în trecut (${mobileDayMeta.label}, ${mobileDayMeta.date} · ora ${hour} — Ora României: ${roClock.dateCompact}, ${roClock.timeShort}).`
-                        );
-                        return;
-                      }
-                      setQcError(null);
-                      setQuickCreateCell({
-                        weekOffset,
-                        dayIndex: mobileDayIdx,
-                        hourSlot: hour,
-                      });
-                    }}
-                    className="p-3 flex items-start gap-3 hover:bg-white/5 transition"
-                  >
-                    <div className="flex-1 space-y-2">
-                      {cellCards.map((c) => renderCellCard(c))}
-                      {isCellEmpty && !isMobileSlotPast && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
+                  <>
+                    {emptyPastSlots.length > 0 && (
+                      <button
+                        type="button"
+                        aria-expanded={showMobileEmptyPastSlots}
+                        onClick={() =>
+                          setShowMobileEmptyPastSlots((prev) => !prev)
+                        }
+                        className="w-full px-3.5 py-2.5 bg-white/[0.02] hover:bg-white/[0.05] text-[11px] font-semibold text-white/55 flex items-center justify-between gap-2 cursor-pointer"
+                      >
+                        <span className="tabular-nums truncate">
+                          {emptyPastSlots.length === 1
+                            ? `1 poziție liberă din ziua încheiată (${formatPlanningOrderPosition(emptyPastSlots[0].hour)})`
+                            : `${emptyPastSlots.length} poziții libere din ziua încheiată (#${getPlanningOrderNumber(emptyPastSlots[0].hour)}–#${getPlanningOrderNumber(emptyPastSlots[emptyPastSlots.length - 1].hour)})`}
+                        </span>
+                        <span className="text-[#64D2FF] font-bold shrink-0">
+                          {showMobileEmptyPastSlots ? 'Ascunde' : 'Afișează'}
+                        </span>
+                      </button>
+                    )}
+
+                    {visibleEntries.length === 0 && (
+                      <div className="px-4 py-6 text-center text-xs text-white/55">
+                        Nu există curse programate pentru {mobileDayMeta.label} ({mobileDayMeta.date}).
+                      </div>
+                    )}
+
+                    {visibleEntries.map(
+                      ({ hour, isMobileSlotPast, cellCards, isCellEmpty }) => (
+                        <div
+                          key={hour}
+                          onClick={() => {
+                            if (!isCellEmpty) return;
+                            if (isMobileSlotPast) {
+                              setToastMessage(
+                                `Ziua ${mobileDayMeta.label} (${mobileDayMeta.date}) este deja încheiată. Selectează ziua de azi sau o zi următoare pentru o cursă nouă.`
+                              );
+                              return;
+                            }
                             setQcError(null);
                             setQuickCreateCell({
                               weekOffset,
@@ -1672,25 +1951,44 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                               hourSlot: hour,
                             });
                           }}
-                          className="w-full py-1.5 rounded-full border border-dashed border-white/20 text-[11px] font-semibold text-white/55 hover:text-[#64D2FF] hover:border-[#0A84FF] flex items-center justify-center gap-1 cursor-pointer"
+                          className="p-3 flex items-start gap-3 hover:bg-white/5 transition"
                         >
-                          <Plus className="w-3 h-3" /> Creare rapidă ({hour})
-                        </button>
-                      )}
-                      {isCellEmpty && isMobileSlotPast && (
-                        <div className="text-[11px] text-white/35 text-center py-1 tabular-nums">
-                          {hour} · interval trecut (Ora României)
+                          <div className="flex-1 space-y-2 min-w-0">
+                            {cellCards.map((c) => renderCellCard(c))}
+                            {isCellEmpty && !isMobileSlotPast && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setQcError(null);
+                                  setQuickCreateCell({
+                                    weekOffset,
+                                    dayIndex: mobileDayIdx,
+                                    hourSlot: hour,
+                                  });
+                                }}
+                                className="w-full min-h-[38px] py-2 rounded-full border border-dashed border-white/20 text-[11px] font-semibold text-white/60 hover:text-[#64D2FF] hover:border-[#0A84FF] flex items-center justify-center gap-1 cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" /> Creare rapidă · {formatPlanningOrderPosition(hour)}
+                              </button>
+                            )}
+                            {isCellEmpty && isMobileSlotPast && (
+                              <div className="text-[11px] text-white/35 text-center py-1 tabular-nums">
+                                {formatPlanningOrderPosition(hour)} · zi încheiată
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  </div>
+                      )
+                    )}
+                  </>
                 );
-              })}
+              })()}
             </div>
 
             {/* Desktop Full 7-Day Grid (`lg:block`) — No Hour Column, 100% Width for the 7 Days */}
             <div className="hidden lg:block overflow-x-auto">
-              <table className="w-full border-collapse table-fixed min-w-[1280px]">
+              <table className="w-full border-collapse table-fixed min-w-[1040px]">
                 <thead>
                   <tr className="border-b border-white/15 bg-white/[0.03]">
                     {weekMeta.days.map((day, dIdx) => {
@@ -1708,7 +2006,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                       return (
                         <th
                           key={day.isoDate}
-                          className={`py-3 px-2.5 text-center border-r border-white/10 last:border-r-0 ${
+                          className={`py-2.5 px-2 text-center border-r border-white/10 last:border-r-0 ${
                             day.isToday
                               ? 'bg-[#0A84FF]/10'
                               : day.isPastDay
@@ -1716,7 +2014,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                                 : ''
                           }`}
                         >
-                          <div className="flex items-center justify-center gap-1.5">
+                          <div className="flex items-baseline justify-center gap-1.5">
                             <span
                               className={`text-xs font-extrabold uppercase tracking-wide ${
                                 day.isToday
@@ -1728,28 +2026,28 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                             >
                               {day.short}
                             </span>
+                            <span
+                              className={`text-base font-black leading-none tabular-nums ${
+                                day.isPastDay ? 'text-white/60' : 'text-white'
+                              }`}
+                            >
+                              {day.dayNum}
+                            </span>
                             {day.isToday && (
                               <span
-                                className="px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider"
+                                className="px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider leading-none"
                                 style={{ backgroundColor: '#0A84FF', color: '#ffffff' }}
                               >
                                 AZI
                               </span>
                             )}
                           </div>
-                          <div
-                            className={`text-xl font-extrabold leading-tight tabular-nums ${
-                              day.isPastDay ? 'text-white/60' : 'text-white'
-                            }`}
-                          >
-                            {day.dayNum}
-                          </div>
                           {sumLdm > 0 ? (
                             <div className="mt-1 text-[11px] tabular-nums font-extrabold flex items-center justify-center gap-1.5">
                               <span className="text-[#FF9F0A]">
                                 {sumTons.toFixed(1)}T
                               </span>
-                              <span className="text-white/30">|</span>
+                              <span className="text-white/30">·</span>
                               <span className="text-[#64D2FF]">
                                 {sumLdm.toFixed(1)} LDM
                               </span>
@@ -1772,7 +2070,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                 <tbody className="divide-y divide-white/10">
                   {HOUR_SLOTS.map((hour) => (
                     <tr key={hour} className="min-h-[188px]">
-                      {/* 7 Day Cells for this Row (No Left Hour Column) */}
+                      {/* 7 Day Cells for this Order Row (No Left Hour Column) */}
                       {weekMeta.days.map((day, dIdx) => {
                         const cellKey = `${day.isoDate}-${hour}`;
                         const isPastSlot = isPlanningSlotInPast(
@@ -1780,6 +2078,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                           hour,
                           roClock.zdt
                         );
+                        const canAcceptDragDrop =
+                          dragPayload?.kind === 'CARD' || !isPastSlot;
                         const cellCards = cards.filter(
                           (c) =>
                             (c.weekOffset ?? 0) === weekOffset &&
@@ -1793,9 +2093,12 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                         return (
                           <td
                             key={cellKey}
+                            data-day-index={dIdx}
+                            data-order-slot={hour}
+                            data-order-num={getPlanningOrderNumber(hour)}
                             onDragOver={(e) => {
-                              e.preventDefault();
-                              if (!isPastSlot) {
+                              if (canAcceptDragDrop) {
+                                e.preventDefault();
                                 setHoveredCellKey(cellKey);
                               }
                             }}
@@ -1805,7 +2108,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                               if (!isCellEmpty) return;
                               if (isPastSlot) {
                                 setToastMessage(
-                                  `Nu se poate programa o cursă nouă pe o dată sau oră din trecut (${day.label}, ${day.date} · ora ${hour} — Ora României: ${roClock.dateCompact}, ${roClock.timeShort}). Selectează o celulă viitoare sau apasă „+ Cursă nouă”.`
+                                  `Ziua ${day.label} (${day.date}) este deja încheiată. Selectează o poziție din ziua de azi sau dintr-o zi următoare ori apasă „+ Cursă nouă”.`
                                 );
                                 return;
                               }
@@ -1823,7 +2126,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                                   : 'cursor-pointer'
                                 : 'cursor-default'
                             } ${
-                              isHovered && !isPastSlot
+                              isHovered && canAcceptDragDrop
                                 ? 'bg-[#0A84FF]/20 ring-2 ring-inset ring-[#0A84FF]'
                                 : !isPastSlot
                                   ? 'hover:bg-white/[0.05]'
@@ -1848,16 +2151,16 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                                       }}
                                       className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity w-full flex items-center justify-center py-1.5 rounded-full border border-dashed border-[#0A84FF]/45 text-[10.5px] font-bold text-[#64D2FF] bg-[#0A84FF]/10 hover:bg-[#0A84FF]/20 cursor-pointer"
                                     >
-                                      <Plus className="w-3 h-3 mr-1" /> Adaugă cursă
+                                      <Plus className="w-3 h-3 mr-1" /> Adaugă cursă ({formatPlanningOrderPosition(hour)})
                                     </button>
                                   )}
                                 </div>
                               ) : !isPastSlot ? (
-                                /* Rapid Create Hover Trigger ONLY inside Future Empty Cells */
+                                /* Rapid Create Hover Trigger inside Today & Future Empty Cells */
                                 <div
                                   className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center py-2.5 rounded-full border border-dashed border-[#0A84FF]/50 text-[11px] font-bold text-[#64D2FF] bg-[#0A84FF]/10"
                                 >
-                                  <Plus className="w-3.5 h-3.5 mr-1" /> Creare rapidă ({hour})
+                                  <Plus className="w-3.5 h-3.5 mr-1" /> Creare rapidă · {formatPlanningOrderPosition(hour)}
                                 </div>
                               ) : null}
                             </div>
@@ -1870,77 +2173,13 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
               </table>
             </div>
           </div>
-
-          {/* Collapsible Bi-Temp 13.6m & Segment Inspector Drawer */}
-          {showBiTempInspector && (
-            <div className="tahoe-glass rounded-[24px] p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
-                <div>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#64D2FF]">
-                    SIMULATOR COMPARTIMENTARE BI-TEMP 13.6M & LDM PE SEGMENTE
-                  </span>
-                  <h3 className="text-base font-bold text-white">
-                    Remorca {selectedTrailer.id} · Perete Despărțitor (Bulkhead):{' '}
-                    {(selectedTrailer.segments[0]?.zone1MaxLdm ?? 6.8).toFixed(1)}m /{' '}
-                    {(selectedTrailer.segments[0]?.zone2MaxLdm ?? 6.8).toFixed(1)}m
-                  </h3>
-                </div>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min={3.4}
-                    max={10.2}
-                    step={0.4}
-                    value={selectedTrailer.segments[0]?.zone1MaxLdm ?? 6.8}
-                    onChange={(e) =>
-                      onUpdateBulkhead(
-                        selectedTrailer.id,
-                        parseFloat(e.target.value)
-                      )
-                    }
-                    className="w-36 accent-[#0A84FF] cursor-pointer"
-                  />
-                  <button
-                    onClick={() => setShowBiTempInspector(false)}
-                    className="px-3 py-1 rounded-full bg-white/10 text-xs text-white/80 cursor-pointer"
-                  >
-                    Închide
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {selectedTrailer.segments.map((seg) => (
-                  <div
-                    key={seg.id}
-                    className="tahoe-card-inner rounded-2xl p-3.5 text-xs space-y-1.5"
-                  >
-                    <div className="font-bold text-white">
-                      {seg.fromCity} → {seg.toCity}
-                    </div>
-                    <div className="flex justify-between tabular-nums">
-                      <span className="text-white/60">
-                        Ocupat: {seg.occupiedLdm.toFixed(1)}m
-                      </span>
-                      <span className="text-[#30D158] font-bold">
-                        Liber: {Math.max(0, seg.totalLdm - seg.occupiedLdm).toFixed(1)} LDM
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-[#64D2FF]">
-                      {seg.unloadingOrders[0] || seg.loadingOrders[0] || `${seg.etaStart} → ${seg.etaEnd}`}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* BOTTOM 2-COLUMN DOCK: Left = COMENZI ÎN AȘTEPTARE | Right = CAMIOANE & REMORCI (ECHIPE) */}
         <div className="w-full grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* PANEL 1: COMENZI ÎN AȘTEPTARE */}
           <div className="tahoe-glass rounded-[24px] overflow-hidden">
-            <div className="bg-gradient-to-r from-[#0A84FF]/35 to-[#0284c7]/30 border-b border-white/15 px-4 py-3.5 text-white flex items-center justify-between">
+            <div className="planning-toolbar-header px-4 py-3 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <ClipboardList className="w-4 h-4 text-[#64D2FF]" />
                 <span className="text-xs font-extrabold uppercase tracking-wider text-white">
@@ -2038,7 +2277,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
 
           {/* BOTTOM PANEL: CAMIOANE / REMORCI (ECHIPE) */}
           <div className="tahoe-glass rounded-[24px] overflow-hidden">
-            <div className="bg-gradient-to-r from-[#0A84FF]/35 to-[#0284c7]/30 border-b border-white/15 px-4 py-3.5 text-white">
+            <div className="planning-toolbar-header px-4 py-3 text-white">
               <div className="flex items-center gap-2">
                 <Truck className="w-4 h-4 text-[#64D2FF]" />
                 <span className="text-xs font-extrabold uppercase tracking-wider text-white">
@@ -2046,7 +2285,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-white/70 mt-0.5">
-                Trage un camion peste lucrare / cursă.
+                Trage un camion peste cursă sau dă click pentru detalii remorcă.
               </p>
             </div>
 
@@ -2066,8 +2305,16 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                     }
                     onDragEnd={() => setDragPayload(null)}
                     onClick={() => {
-                      setSelectedTrailerId(t.id);
-                      setShowBiTempInspector(true);
+                      const trailerCard =
+                        weekCardsAll.find((c) => c.trailerId === t.id) ||
+                        cards.find((c) => c.trailerId === t.id);
+                      if (trailerCard) {
+                        setSelectedCardDetail(trailerCard);
+                      } else {
+                        setQcTrailerId(t.id);
+                        setQcTractorId(tractorPlate);
+                        openQuickCreateModal();
+                      }
                     }}
                     className={`p-3 rounded-2xl tahoe-card-inner hover:bg-white/10 border border-white/10 border-l-4 ${borderStyle} flex items-center justify-between gap-2 transition cursor-grab active:cursor-grabbing select-none`}
                   >
@@ -2178,7 +2425,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                             roClock.zdt
                           ).days[selectedCardDetail.dayIndex] ||
                           WEEK_DAYS[selectedCardDetail.dayIndex];
-                        return `${detDay.label} (${detDay.date}) · Ora ${selectedCardDetail.hourSlot}`;
+                        return `${detDay.label} (${detDay.date}) · ${formatPlanningOrderPosition(selectedCardDetail.hourSlot)}`;
                       })()}
                     </span>
                     {detailMapTrip.lifecycle === 'past' ? (
@@ -2285,7 +2532,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
               {/* Edit Assignment / Reschedule Controls */}
               <div className="tahoe-card-inner rounded-2xl p-4 space-y-3 border border-white/10">
                 <div className="text-xs font-bold uppercase tracking-wider text-[#64D2FF]">
-                  MODIFICARE RAPIDĂ ALOCARE CAMION, ZI SAU ORĂ
+                  MODIFICARE RAPIDĂ ALOCARE CAMION, ZI SAU ORDINEA COMENZII
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                   <div>
@@ -2342,20 +2589,25 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                       value={selectedCardDetail.dayIndex}
                       onChange={(e) => {
                         const newDay = parseInt(e.target.value, 10);
-                        const updated = {
-                          ...selectedCardDetail,
-                          dayIndex: newDay,
-                        };
-                        setSelectedCardDetail(updated);
-                        setCards((prev) =>
-                          prev.map((c) => (c.id === updated.id ? updated : c))
+                        requestCardMoveConfirmation(
+                          selectedCardDetail,
+                          selectedCardDetail.weekOffset ?? 0,
+                          newDay,
+                          selectedCardDetail.hourSlot
                         );
                       }}
                       className="w-full tahoe-glass rounded-xl px-3 py-2 text-white font-bold border border-white/15"
                     >
-                      {WEEK_DAYS.map((d, idx) => (
-                        <option key={idx} value={idx} className="bg-slate-900 text-white">
-                          {d.label} ({d.date})
+                      {getPlanningWeekMeta(
+                        selectedCardDetail.weekOffset ?? 0,
+                        roClock.zdt
+                      ).days.map((d) => (
+                        <option
+                          key={d.isoDate}
+                          value={d.dayIndex}
+                          className="bg-slate-900 text-white"
+                        >
+                          {d.label} ({d.date}){d.isToday ? ' · AZI' : ''}
                         </option>
                       ))}
                     </select>
@@ -2363,25 +2615,23 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
 
                   <div>
                     <label className="block font-semibold text-white/70 mb-1">
-                      Ora Planificată
+                      Ordinea Comenzii pe Zi
                     </label>
                     <select
                       value={selectedCardDetail.hourSlot}
                       onChange={(e) => {
-                        const updated = {
-                          ...selectedCardDetail,
-                          hourSlot: e.target.value,
-                        };
-                        setSelectedCardDetail(updated);
-                        setCards((prev) =>
-                          prev.map((c) => (c.id === updated.id ? updated : c))
+                        requestCardMoveConfirmation(
+                          selectedCardDetail,
+                          selectedCardDetail.weekOffset ?? 0,
+                          selectedCardDetail.dayIndex,
+                          e.target.value
                         );
                       }}
                       className="w-full tahoe-glass rounded-xl px-3 py-2 text-white font-bold border border-white/15"
                     >
                       {HOUR_SLOTS.map((h) => (
                         <option key={h} value={h} className="bg-slate-900 text-white">
-                          Ora {h}
+                          {formatPlanningOrderPosition(h)}
                         </option>
                       ))}
                     </select>
@@ -2415,6 +2665,96 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* Per-Trailer Bi-Temp 13.6m Bulkhead & Segment LDM Disclosure (on-demand inside detail modal only) */}
+                {knownDetailTrailer && knownDetailTrailer.segments.length > 0 && (
+                  <details className="planning-bitemp-disclosure rounded-xl border border-white/12 bg-black/20 px-3.5 py-2.5 text-xs">
+                    <summary className="flex flex-wrap items-center justify-between gap-2 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                      <span className="inline-flex items-center gap-2 font-bold text-white">
+                        <Sliders
+                          className="w-3.5 h-3.5 text-[#64D2FF] shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>
+                          Perete despărțitor Bi-Temp 13.6m ({knownDetailTrailer.id}):{' '}
+                          <span className="text-[#64D2FF] tabular-nums">
+                            Z1 {(knownDetailTrailer.segments[0]?.zone1MaxLdm ?? 6.8).toFixed(1)}m
+                          </span>{' '}
+                          /{' '}
+                          <span className="text-[#30D158] tabular-nums">
+                            Z2 {(knownDetailTrailer.segments[0]?.zone2MaxLdm ?? 6.8).toFixed(1)}m
+                          </span>
+                        </span>
+                      </span>
+                      <span className="planning-bitemp-toggle-hint text-[11px] font-bold text-[#64D2FF]">
+                        Reglează compartimentele ▾
+                      </span>
+                    </summary>
+
+                    <div className="mt-3 pt-3 border-t border-white/10 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <label
+                          htmlFor={`${qcFormId}-bulkhead`}
+                          className="text-xs font-semibold text-white/80"
+                        >
+                          Poziție perete Zona 1 ({knownDetailTrailer.zone1Temp}°C) / Zona 2 (+{knownDetailTrailer.zone2Temp}°C)
+                        </label>
+                        <div className="flex items-center gap-3 w-full sm:w-auto">
+                          <input
+                            id={`${qcFormId}-bulkhead`}
+                            type="range"
+                            min={3.4}
+                            max={10.2}
+                            step={0.4}
+                            value={knownDetailTrailer.segments[0]?.zone1MaxLdm ?? 6.8}
+                            style={
+                              {
+                                '--progress': `${Math.round(
+                                  (((knownDetailTrailer.segments[0]?.zone1MaxLdm ?? 6.8) -
+                                    3.4) /
+                                    (10.2 - 3.4)) *
+                                    100
+                                )}%`,
+                              } as React.CSSProperties
+                            }
+                            onChange={(e) =>
+                              onUpdateBulkhead(
+                                knownDetailTrailer.id,
+                                parseFloat(e.target.value)
+                              )
+                            }
+                            className="bitemp-range-slider flex-1 sm:w-44 cursor-pointer"
+                          />
+                          <span className="text-xs font-extrabold tabular-nums text-white shrink-0">
+                            {(knownDetailTrailer.segments[0]?.zone1MaxLdm ?? 6.8).toFixed(1)}m /{' '}
+                            {(knownDetailTrailer.segments[0]?.zone2MaxLdm ?? 6.8).toFixed(1)}m
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {knownDetailTrailer.segments.map((seg) => (
+                          <div
+                            key={seg.id}
+                            className="tahoe-card-inner rounded-xl p-2.5 text-[11px] space-y-1"
+                          >
+                            <div className="font-bold text-white truncate">
+                              {seg.fromCity} → {seg.toCity}
+                            </div>
+                            <div className="flex justify-between tabular-nums">
+                              <span className="text-white/60">
+                                Ocupat: {seg.occupiedLdm.toFixed(1)}m
+                              </span>
+                              <span className="text-[#30D158] font-bold">
+                                Liber: {Math.max(0, seg.totalLdm - seg.occupiedLdm).toFixed(1)} LDM
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </details>
+                )}
 
                 {/* Interactive Leaflet HGV Map for THIS Specific Trip's Complete Route */}
                 <EuropeLiveMap
@@ -2587,8 +2927,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                     id={`${qcFormId}-heading`}
                     className="text-lg font-extrabold text-white truncate mt-0.5"
                   >
-                    {modalDay.label} ({modalDay.date}) · Ora{' '}
-                    {quickCreateCell.hourSlot}
+                    {modalDay.label} ({modalDay.date}) ·{' '}
+                    {formatPlanningOrderPosition(quickCreateCell.hourSlot)}
                   </h3>
                 </div>
                 <button
@@ -2681,7 +3021,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                       htmlFor={`${qcFormId}-slot`}
                       className="block font-bold text-white/75 mb-1"
                     >
-                      Ora / Rând calendar
+                      Ordinea comenzii pe zi
                     </label>
                     <select
                       id={`${qcFormId}-slot`}
@@ -2714,9 +3054,9 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                             disabled={slotPast}
                             className="bg-slate-900 text-white"
                           >
-                            {slot}{' '}
+                            {formatPlanningOrderPosition(slot)}{' '}
                             {slotPast
-                              ? '· oră trecută'
+                              ? '· zi încheiată'
                               : occupied
                                 ? '· ocupat (+grupaj)'
                                 : '· liber'}
@@ -3070,7 +3410,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   type="submit"
                   className="px-5 py-2.5 rounded-full tahoe-btn-primary text-white font-bold shadow-md cursor-pointer"
                 >
-                  + Salvează Cursa ({modalDay.short} {modalDay.dayNum} · {quickCreateCell.hourSlot})
+                  + Salvează Cursa ({modalDay.short} {modalDay.dayNum} · #{getPlanningOrderNumber(quickCreateCell.hourSlot)})
                 </button>
               </div>
             </form>
@@ -3078,6 +3418,166 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
         </div>
         );
       })()}
+
+      {/* IN-APP CONFIRMATION POPUP (`<dialog>`) WHEN MOVING OR REORDERING A PLANNING CARD */}
+      <dialog
+        ref={moveDialogRef}
+        {...({ closedby: 'any' } as React.DialogHTMLAttributes<HTMLDialogElement>)}
+        aria-labelledby={moveDialogTitleId}
+        className="tps-confirm-dialog"
+        onClose={(e) => {
+          const dialog = e.currentTarget;
+          const action = dialog.returnValue;
+          dialog.returnValue = '';
+          if (action === 'confirm' && pendingCardMove) {
+            applyConfirmedCardMove(pendingCardMove);
+          }
+          setPendingCardMove(null);
+        }}
+      >
+        {pendingCardMove && (() => {
+          const moveTrailer = trailers.find(
+            (t) => t.id === pendingCardMove.card.trailerId
+          );
+          const moveTractorPlate =
+            pendingCardMove.card.tractorPlate ??
+            (moveTrailer ? moveTrailer.tractorId.split(' (')[0] : '—');
+          const hasTwoPlates =
+            moveTractorPlate !== pendingCardMove.card.trailerId &&
+            moveTractorPlate !== '—';
+
+          return (
+            <div className="tahoe-glass-elevated rounded-[26px] p-5 sm:p-6 space-y-4 shadow-2xl border border-white/20">
+              <div className="flex items-start justify-between gap-3 border-b border-white/15 pb-3.5">
+                <div className="min-w-0 flex-1">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold uppercase tracking-wider bg-[#0A84FF]/15 text-[#64D2FF] border border-[#0A84FF]/35">
+                    <RefreshCw className="w-3 h-3 shrink-0" aria-hidden="true" />
+                    <span>Confirmare mutare comandă</span>
+                  </span>
+                  <h2
+                    id={moveDialogTitleId}
+                    className="text-base sm:text-lg font-extrabold text-white mt-1.5 leading-snug"
+                  >
+                    Ești sigur că vrei să muți această comandă?
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => moveDialogRef.current?.close()}
+                  aria-label="Închide fereastra de confirmare"
+                  className="w-8 h-8 rounded-full tahoe-card-inner border border-white/15 hover:bg-white/15 text-white flex items-center justify-center cursor-pointer shrink-0 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Card Summary */}
+              <div className="tahoe-card-inner rounded-2xl p-3.5 space-y-2 border border-white/10">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-extrabold text-white truncate">
+                    {pendingCardMove.card.clientName}
+                  </span>
+                  <span className="text-xs font-extrabold text-[#64D2FF] tabular-nums shrink-0">
+                    {pendingCardMove.card.ldm.toFixed(1)} LDM ·{' '}
+                    {pendingCardMove.card.weightTons.toFixed(1)} T
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-white/75">
+                  <span className="inline-flex items-center gap-1 font-semibold truncate">
+                    <MapPin className="w-3.5 h-3.5 text-[#0A84FF] shrink-0" aria-hidden="true" />
+                    <span>{pendingCardMove.card.routeLabel}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 shrink-0">
+                    {hasTwoPlates && (
+                      <>
+                        {renderEuroRoPlate(moveTractorPlate, true)}
+                        <span className="text-[10px] font-black text-white/60">+</span>
+                      </>
+                    )}
+                    {renderEuroRoPlate(pendingCardMove.card.trailerId, true)}
+                  </span>
+                </div>
+              </div>
+
+              {/* From -> To Order Position */}
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-2.5 text-xs">
+                <div className="tahoe-card-inner rounded-2xl p-3 border border-white/10">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-white/55">
+                    Poziție actuală
+                  </div>
+                  <div className="text-sm font-extrabold text-white mt-0.5">
+                    {pendingCardMove.fromDayLabel} ({pendingCardMove.fromDayDate})
+                    {pendingCardMove.fromIsToday ? ' · AZI' : ''}
+                  </div>
+                  <div className="text-xs font-bold text-white/70 tabular-nums mt-0.5">
+                    Ordinea #{pendingCardMove.fromOrderNum}
+                  </div>
+                </div>
+
+                <div className="hidden sm:flex w-8 h-8 rounded-full bg-[#0A84FF]/15 border border-[#0A84FF]/35 items-center justify-center text-[#0A84FF] shrink-0">
+                  <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                </div>
+
+                <div className="tahoe-card-inner rounded-2xl p-3 border border-[#0A84FF]/45 bg-[#0A84FF]/10">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[#64D2FF]">
+                    Noua poziție
+                  </div>
+                  <div className="text-sm font-extrabold text-white mt-0.5">
+                    {pendingCardMove.toDayLabel} ({pendingCardMove.toDayDate})
+                    {pendingCardMove.toIsToday ? ' · AZI' : ''}
+                  </div>
+                  <div className="text-xs font-extrabold text-[#64D2FF] tabular-nums mt-0.5">
+                    Ordinea #{pendingCardMove.toOrderNum}
+                  </div>
+                </div>
+              </div>
+
+              {pendingCardMove.swapWithCard && (
+                <div className="px-3.5 py-2 rounded-2xl bg-[#0A84FF]/12 border border-[#0A84FF]/35 text-[11.5px] font-bold text-[#64D2FF] flex items-center gap-2">
+                  <RefreshCw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>
+                    Schimbă ordinea pe aceeași zi cu „{pendingCardMove.swapWithCard.clientName}” (#{pendingCardMove.fromOrderNum} ↔ #{pendingCardMove.toOrderNum}).
+                  </span>
+                </div>
+              )}
+
+              {pendingCardMove.toIsPastDay &&
+                !(
+                  pendingCardMove.fromWeekOffset ===
+                    pendingCardMove.toWeekOffset &&
+                  pendingCardMove.fromDayIndex === pendingCardMove.toDayIndex
+                ) && (
+                  <div className="px-3.5 py-2 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-[11.5px] font-semibold text-amber-300 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                    <span>
+                      Notă: {pendingCardMove.toDayLabel} ({pendingCardMove.toDayDate}) este o zi anterioară zilei de azi, dar poți confirma mutarea comenzii dacă dorești.
+                    </span>
+                  </div>
+                )}
+
+              <p className="text-xs text-white/70 leading-relaxed">
+                Planificarea ține cont de zi și de ordinea comenzilor pe zi, fără restricție de oră.
+              </p>
+
+              <form method="dialog" className="pt-1 flex items-center justify-end gap-2.5">
+                <button
+                  value="cancel"
+                  autoFocus
+                  className="px-4 py-2.5 rounded-full tahoe-btn-secondary text-xs font-bold text-white cursor-pointer"
+                >
+                  Nu, păstrează
+                </button>
+                <button
+                  value="confirm"
+                  className="px-5 py-2.5 rounded-full tahoe-btn-primary text-xs font-extrabold text-white shadow-md cursor-pointer"
+                >
+                  Da, mută comanda
+                </button>
+              </form>
+            </div>
+          );
+        })()}
+      </dialog>
 
       {/* Printable CMR & Fiscal Invoice Modal */}
       <CmrAndInvoiceModal

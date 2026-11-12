@@ -33,6 +33,7 @@ import {
 import { getRealFleet } from './FleetVinAndDossierModal';
 import {
   findFirstFuturePlanningSlot,
+  formatPlanningOrderPosition,
   formatRomaniaClockSnapshot,
   getDefaultRomaniaTripDateTimes,
   getMinRomaniaDateTimeLocal,
@@ -522,12 +523,12 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
   );
 
   return (
-    <div className="space-y-6">
-      {/* Top Header */}
-      <div className="tahoe-glass rounded-[28px] p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <div className="space-y-3 sm:space-y-6">
+      {/* Top Header — hidden on mobile (tab pill above already says Comenzi & curse; + Comandă sits beside search), unchanged on desktop */}
+      <div className="hidden sm:flex tahoe-glass rounded-[28px] p-5 flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-white mt-1">
-            Comenzi & curse
+            Comenzi &amp; curse
           </h1>
         </div>
 
@@ -559,37 +560,56 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
       )}
 
       {/* Active & Planned Orders Table (Matching Image 4 "Comenzi" panel) */}
-      <div className="tahoe-glass rounded-[28px] p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10 pb-4">
-          <div className="flex items-center gap-2 flex-nowrap overflow-x-auto no-scrollbar">
+      <div className="tahoe-glass rounded-[24px] sm:rounded-[28px] p-3.5 sm:p-5 space-y-3 sm:space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 border-b border-white/10 pb-3 sm:pb-4">
+          <div className="tps-subtab-scroller grid grid-cols-3 gap-1.5 w-full sm:w-auto sm:flex sm:items-center sm:gap-2 sm:flex-nowrap sm:overflow-x-auto no-scrollbar">
             {[
-              { id: 'ALL', label: `Toate (${activeLoads.length})` },
-              { id: 'ACTIVE', label: 'Active / În tranzit' },
-              { id: 'DONE', label: 'La descărcare / Finalizate' },
+              { id: 'ALL', label: `Toate (${activeLoads.length})`, mobileLabel: `Toate (${activeLoads.length})` },
+              { id: 'ACTIVE', label: 'Active / În tranzit', mobileLabel: 'În tranzit' },
+              { id: 'DONE', label: 'La descărcare / Finalizate', mobileLabel: 'Finalizate' },
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setStatusFilter(tab.id)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition cursor-pointer ${
+                type="button"
+                aria-pressed={statusFilter === tab.id}
+                onClick={(e) => {
+                  setStatusFilter(tab.id);
+                  e.currentTarget.scrollIntoView({
+                    block: 'nearest',
+                    inline: 'nearest',
+                  });
+                }}
+                className={`min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-2 sm:px-3.5 py-2 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-semibold flex items-center justify-center whitespace-nowrap sm:shrink-0 transition cursor-pointer ${
                   statusFilter === tab.id
-                    ? 'bg-[#0A84FF] text-white'
+                    ? 'bg-[#0A84FF] border border-[#0A84FF] text-white'
                     : 'tahoe-btn-secondary text-white/80 hover:text-white'
                 }`}
               >
-                {tab.label}
+                <span className="sm:hidden truncate">{tab.mobileLabel}</span>
+                <span className="hidden sm:inline">{tab.label}</span>
               </button>
             ))}
           </div>
 
-          <div className="relative w-full sm:w-72">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Caută comandă, client, remorcă..."
-              className="w-full bg-[#0b101d] border border-slate-800 rounded-full pl-9 pr-3.5 py-1.5 text-xs text-white"
-            />
+          <div className="flex items-center gap-2 w-full sm:w-72">
+            <div className="relative flex-1 min-w-0">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Caută comandă, client, remorcă..."
+                className="w-full bg-[#0b101d] border border-slate-800 rounded-full pl-9 pr-3.5 py-2 sm:py-1.5 text-xs text-white"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowNewOrderModal(true)}
+              className="sm:hidden px-3 py-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1 shadow-md shadow-indigo-600/25 shrink-0 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5 shrink-0" />
+              <span>Comandă</span>
+            </button>
           </div>
         </div>
 
@@ -859,61 +879,65 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
       <div
         id="orders-allocation-wizard"
         ref={allocationPanelRef}
-        className={`tahoe-glass rounded-[28px] p-5 space-y-5 shadow-xl scroll-mt-24 transition-shadow duration-300 ${
+        className={`tahoe-glass rounded-[24px] sm:rounded-[28px] p-3.5 sm:p-5 space-y-3 sm:space-y-5 shadow-xl scroll-mt-24 transition-shadow duration-300 ${
           highlightAllocation ? 'ring-2 ring-[#0A84FF] shadow-[#0A84FF]/25' : ''
         }`}
       >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10 pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 border-b border-white/10 pb-3 sm:pb-4">
           <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">
+            <span className="hidden sm:block text-xs font-bold uppercase tracking-wider text-indigo-400">
               WIZARD PLANIFICARE CURSĂ NOUĂ / GRUPAJ
             </span>
             <h2
               ref={allocationHeadingRef}
               tabIndex={-1}
-              className="text-lg font-bold text-white focus:outline-none"
+              className="text-sm sm:text-lg font-bold text-white focus:outline-none"
             >
-              ← Cursă nouă (Alocare Comandă pe Remorcă, Cap Tractor și Șofer)
+              <span className="sm:hidden">Alocare comandă pe remorcă</span>
+              <span className="hidden sm:inline">
+                ← Cursă nouă (Alocare Comandă pe Remorcă, Cap Tractor și Șofer)
+              </span>
             </h2>
           </div>
 
-          {/* 3-Step Pills matching Image 4 */}
-          <div className="flex items-center gap-2 text-xs flex-nowrap overflow-x-auto no-scrollbar">
+          {/* 3-Step Pills — single 3-col row on mobile, unchanged flex on desktop */}
+          <div className="grid grid-cols-3 gap-1.5 w-full sm:w-auto sm:flex sm:items-center sm:gap-2 text-[11px] sm:text-xs">
             {[
-              { step: 1, label: '1. Detalii Comandă' },
-              { step: 2, label: '2. Alocare Vehicul & Șofer' },
-              { step: 3, label: '3. Confirmare & LDM' },
+              { step: 1, label: '1. Detalii Comandă', mobileLabel: '1. Detalii' },
+              { step: 2, label: '2. Alocare Vehicul & Șofer', mobileLabel: '2. Alocare' },
+              { step: 3, label: '3. Confirmare & LDM', mobileLabel: '3. Confirmare' },
             ].map((item) => (
               <button
                 key={item.step}
                 onClick={() => setWizardStep(item.step as 1 | 2 | 3)}
-                className={`px-3.5 py-1.5 rounded-full font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${
+                className={`min-w-0 px-2 sm:px-3.5 py-1.5 rounded-full font-bold whitespace-nowrap truncate transition cursor-pointer ${
                   wizardStep === item.step
                     ? 'bg-[#0A84FF] text-white shadow-md'
                     : 'tahoe-btn-secondary text-white/80'
                 }`}
               >
-                {item.label}
+                <span className="sm:hidden">{item.mobileLabel}</span>
+                <span className="hidden sm:inline">{item.label}</span>
               </button>
             ))}
           </div>
         </div>
 
         {unassignedOrders.length === 0 ? (
-          <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-sm text-emerald-300 flex items-center justify-between gap-3">
+          <div className="p-3 sm:p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs sm:text-sm text-emerald-300 flex items-center justify-between gap-2 sm:gap-3">
             <span>
-              Toate comenzile nealocate au fost deja planificate! Creează o comandă nouă pentru a testa wizard-ul.
+              Toate comenzile nealocate au fost planificate.
             </span>
             <button
               onClick={() => setShowNewOrderModal(true)}
-              className="px-4 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0 cursor-pointer"
+              className="px-3.5 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0 cursor-pointer"
             >
               + Comandă nouă
             </button>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+          <div className="space-y-3 sm:space-y-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 text-xs">
               <div>
                 <label
                   htmlFor={`${formUid}-wiz-order`}
@@ -1261,7 +1285,7 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
                           htmlFor={`${formUid}-hour`}
                           className="block text-white/75 font-bold mb-1"
                         >
-                          Ora încărcării
+                          Ordinea comenzii pe zi
                         </label>
                         <select
                           id={`${formUid}-hour`}
@@ -1286,7 +1310,8 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
                                 disabled={slotPast}
                                 className="bg-slate-900 text-white"
                               >
-                                {slot} {slotPast ? '· oră trecută' : ''}
+                                {formatPlanningOrderPosition(slot)}{' '}
+                                {slotPast ? '· zi trecută' : ''}
                               </option>
                             );
                           })}

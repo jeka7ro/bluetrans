@@ -594,13 +594,13 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
   );
 
   return (
-    <div className="space-y-6">
-      {/* Header & 4-Tab Selector — single-row capsule tablist */}
-      <div className="tahoe-glass rounded-full p-2 sm:p-2.5">
+    <div className="space-y-3 sm:space-y-6">
+      {/* Header & 4-Tab Selector — single-row capsule tablist (all 4 visible without scroll on mobile & PC) */}
+      <div className="tahoe-glass rounded-full p-1.5 sm:p-2.5">
         <div
           role="tablist"
           aria-label="Secțiuni operațiuni flotă și administrare"
-          className="flex flex-nowrap items-center gap-2 overflow-x-auto no-scrollbar"
+          className="tps-subtab-scroller grid grid-cols-4 gap-1 sm:flex sm:flex-nowrap sm:items-center sm:gap-2 sm:overflow-x-auto no-scrollbar"
           onKeyDown={(e) => {
             const ids: Array<'fleet' | 'tacho' | 'clients' | 'invoicing'> = [
               'fleet',
@@ -627,53 +627,66 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
             {
               id: 'fleet',
               label: 'Flotă',
+              mobileLabel: 'Flotă',
               icon: Truck,
             },
             {
               id: 'tacho',
               label: 'Șoferi & Tahograf',
+              mobileLabel: 'Șoferi',
               icon: IdCard,
               demo: true,
             },
             {
               id: 'clients',
               label: `Clienți (${clientsList.length})`,
+              mobileLabel: 'Clienți',
               icon: Building2,
               demo: true,
             },
             {
               id: 'invoicing',
               label: 'Facturare',
+              mobileLabel: 'Facturi',
               icon: Receipt,
               demo: true,
             },
-          ].map((tab: { id: string; label: string; icon: React.ElementType; demo?: boolean }) => {
-            const Icon = tab.icon;
-            const isSelected = section === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={isSelected}
-                tabIndex={isSelected ? 0 : -1}
-                onClick={(e) => {
-                  setSection(
-                    tab.id as 'fleet' | 'tacho' | 'clients' | 'invoicing'
-                  );
-                  e.currentTarget.scrollIntoView({
-                    block: 'nearest',
-                    inline: 'nearest',
-                  });
-                }}
-                className="tps-nav-tab-btn h-9 px-4 rounded-full tahoe-btn-secondary text-xs font-bold text-white/80 hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                <Icon className="w-3.5 h-3.5 shrink-0" />
-                <span>{tab.label}</span>
-                {tab.demo && <DemoBadge />}
-              </button>
-            );
-          })}
+          ].map(
+            (tab: {
+              id: string;
+              label: string;
+              mobileLabel: string;
+              icon: React.ElementType;
+              demo?: boolean;
+            }) => {
+              const Icon = tab.icon;
+              const isSelected = section === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSelected}
+                  tabIndex={isSelected ? 0 : -1}
+                  onClick={(e) => {
+                    setSection(
+                      tab.id as 'fleet' | 'tacho' | 'clients' | 'invoicing'
+                    );
+                    e.currentTarget.scrollIntoView({
+                      block: 'nearest',
+                      inline: 'nearest',
+                    });
+                  }}
+                  className="tps-nav-tab-btn min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 sm:h-9 px-1.5 sm:px-4 rounded-full tahoe-btn-secondary text-[11px] sm:text-xs font-bold text-white/80 hover:text-white flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap sm:shrink-0 cursor-pointer"
+                >
+                  <Icon className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                  <span className="sm:hidden truncate">{tab.mobileLabel}</span>
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  {tab.demo && <DemoBadge className="hidden sm:inline-flex" />}
+                </button>
+              );
+            }
+          )}
         </div>
       </div>
 
@@ -710,15 +723,18 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
           SECTION 2: DRIVERS MANAGEMENT, DOCUMENTS (PERMIS, ATESTAT, CARD) & TACHOGRAPH
       ====================================================================== */}
       {section === 'tacho' && (
-        <div className="space-y-4">
-          <div className="tahoe-glass rounded-[28px] overflow-hidden">
-            <div className="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                  <IdCard className="w-4 h-4 text-[#0A84FF]" />
-                  Gestiune Șoferi, Valabilitate Documente (Permis C+E, Atestat CPI/CPC, Card Tahograf) & Timpi CE 561/2006
+        <div className="space-y-3 sm:space-y-4">
+          <div className="tahoe-glass rounded-[24px] sm:rounded-[28px] overflow-hidden">
+            <div className="p-3 sm:p-4 border-b border-white/10 flex flex-nowrap sm:flex-wrap items-center justify-between gap-2 sm:gap-3">
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-white flex items-center gap-1.5 sm:gap-2 min-w-0">
+                  <IdCard className="w-4 h-4 text-[#0A84FF] shrink-0" />
+                  <span className="sm:hidden truncate">Șoferi &amp; Tahograf ({driversList.length})</span>
+                  <span className="hidden sm:inline">
+                    Gestiune Șoferi, Valabilitate Documente (Permis C+E, Atestat CPI/CPC, Card Tahograf) &amp; Timpi CE 561/2006
+                  </span>
                 </h2>
-                <p className="text-xs text-white/65 mt-0.5">
+                <p className="hidden sm:block text-xs text-white/65 mt-0.5">
                   Evidența completă a șoferilor, expirărilor documentelor obligatorii și a orelor de conducere rămase azi / săptămânal.
                 </p>
               </div>
@@ -740,10 +756,11 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
                     remainingWeeklyHours: 56.0,
                   })
                 }
-                className="px-4 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0070e0] text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
+                className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-[#0A84FF] hover:bg-[#0070e0] text-white text-[11px] sm:text-xs font-extrabold flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0"
               >
-                <Plus className="w-4 h-4" />
-                <span>+ Adaugă Șofer Nou</span>
+                <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                <span className="sm:hidden">Șofer nou</span>
+                <span className="hidden sm:inline">+ Adaugă Șofer Nou</span>
               </button>
             </div>
 
@@ -829,17 +846,45 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
           SECTION 3: CLIENTS & COMMERCIAL CONTRACTS DATABASE (FULL CRUD)
       ====================================================================== */}
       {section === 'clients' && (
-        <div className="tahoe-glass rounded-[28px] overflow-hidden">
-          <div className="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-[#0A84FF]" />
-                Clienți & contracte
+        <div className="tahoe-glass rounded-[24px] sm:rounded-[28px] overflow-hidden">
+          <div className="p-3 sm:p-4 border-b border-white/10 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2 sm:gap-3">
+            <div className="flex items-center justify-between gap-2 w-full sm:w-auto">
+              <h2 className="text-sm font-bold text-white flex items-center gap-1.5 sm:gap-2">
+                <Building2 className="w-4 h-4 text-[#0A84FF] shrink-0" />
+                <span>Clienți &amp; contracte ({filteredClients.length})</span>
               </h2>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setEditingClient({
+                    id: `cli-${Date.now()}`,
+                    name: '',
+                    countryCode: 'RO',
+                    vatCode: 'RO',
+                    defaultFromCity: 'Oradea',
+                    defaultToCity: 'Rotterdam',
+                    defaultTemp: 4,
+                    defaultLdm: 4.2,
+                    defaultWeightTons: 6.0,
+                    cargoCategory: 'Marfă Frigo Controlată (+4°C)',
+                    contactPerson: 'Responsabil Logistică',
+                    email: 'logistica@client.ro',
+                    phone: '+40 722 000 000',
+                    rateEurPerKm: 1.45,
+                    rateEurPerLdm: 195,
+                    paymentTermDays: 30,
+                  })
+                }
+                className="sm:hidden px-3 py-1.5 rounded-full bg-[#0A84FF] hover:bg-[#0070e0] text-white text-[11px] font-extrabold flex items-center gap-1 cursor-pointer shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0" />
+                <span>Client nou</span>
+              </button>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative w-60">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <div className="relative w-full sm:w-60">
                 <Search className="w-3.5 h-3.5 text-white/50 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
@@ -872,10 +917,10 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
                     paymentTermDays: 30,
                   })
                 }
-                className="px-4 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0070e0] text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
+                className="hidden sm:flex px-4 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0070e0] text-white text-xs font-extrabold items-center gap-1.5 cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>+ Adaugă Client & Contract</span>
+                <span>+ Adaugă Client &amp; Contract</span>
               </button>
             </div>
           </div>
@@ -963,11 +1008,14 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
           SECTION 4: INVOICING, PROFITABILITY & PRINTABLE CMR / INVOICE
       ====================================================================== */}
       {section === 'invoicing' && (
-        <div className="tahoe-glass rounded-[28px] overflow-hidden">
-          <div className="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-bold text-white flex items-center gap-2">
-              <Receipt className="w-4 h-4 text-emerald-400" />
-              Facturare Curse, Venit Suplimentar din Grupaj, Marjă Netă & Generare CMR / Factură PDF
+        <div className="tahoe-glass rounded-[24px] sm:rounded-[28px] overflow-hidden">
+          <div className="p-3 sm:p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-white flex items-center gap-1.5 sm:gap-2">
+              <Receipt className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="sm:hidden">Facturare &amp; CMR ({invoices.length})</span>
+              <span className="hidden sm:inline">
+                Facturare Curse, Venit Suplimentar din Grupaj, Marjă Netă &amp; Generare CMR / Factură PDF
+              </span>
             </h2>
           </div>
 
@@ -1096,41 +1144,43 @@ export const TmsOperationsView: React.FC<TmsOperationsViewProps> = ({
         </div>
       )}
 
-      {/* Bottom Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="tahoe-glass rounded-[24px] p-4 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-blue-400 uppercase">
-            <Users className="w-4 h-4" />
-            Clienți Salvați în Bază & Conectați la Oferte Automate
+      {/* Bottom Summary Cards — 2-per-row compact KPIs without long helper prose on mobile; unchanged 3-col on desktop */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-4">
+        <div className="tahoe-glass rounded-[20px] sm:rounded-[24px] p-3 sm:p-4 space-y-1 sm:space-y-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 text-[10.5px] sm:text-xs font-bold text-blue-400 uppercase">
+            <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="sm:hidden truncate">Clienți Activi</span>
+            <span className="hidden sm:inline">Clienți Salvați în Bază &amp; Conectați la Oferte Automate</span>
           </div>
-          <div className="text-2xl font-extrabold text-white">
-            {clientsList.length} Companii Active
+          <div className="text-lg sm:text-2xl font-extrabold text-white">
+            {clientsList.length} Companii
           </div>
-          <p className="text-xs text-slate-400">
+          <p className="hidden sm:block text-xs text-slate-400">
             Disponibili instant prin drop-list la introducerea comenzilor și conectați la generatorul de oferte comerciale pentru spațiul liber.
           </p>
         </div>
 
-        <div className="tahoe-glass rounded-[24px] p-4 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase">
-            <BarChart3 className="w-4 h-4" />
-            Creștere Medie Venit / Cursă prin Grupaj Dinamic
+        <div className="tahoe-glass rounded-[20px] sm:rounded-[24px] p-3 sm:p-4 space-y-1 sm:space-y-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 text-[10.5px] sm:text-xs font-bold text-emerald-400 uppercase">
+            <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="sm:hidden truncate">Câștig Grupaj</span>
+            <span className="hidden sm:inline">Creștere Medie Venit / Cursă prin Grupaj Dinamic</span>
           </div>
-          <div className="text-2xl font-extrabold text-emerald-400">+410 € / cursă</div>
-          <p className="text-xs text-slate-400">
+          <div className="text-lg sm:text-2xl font-extrabold text-emerald-400">+410 € / cursă</div>
+          <p className="hidden sm:block text-xs text-slate-400">
             Valorificarea segmentelor eliberate după descărcările intermediare (ex. Viena → Rotterdam sau München → Almere) crește marja netă cu 14–18%.
           </p>
         </div>
 
-        <div className="tahoe-glass rounded-[24px] p-4 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase">
-            <ShieldCheck className="w-4 h-4" />
-            Integrări Tehnice Active
+        <div className="col-span-2 md:col-span-1 tahoe-glass rounded-[20px] sm:rounded-[24px] p-3 sm:p-4 space-y-1 sm:space-y-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 text-[10.5px] sm:text-xs font-bold text-amber-400 uppercase">
+            <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span>Integrări Tehnice Active</span>
           </div>
-          <div className="text-sm font-bold text-white">
+          <div className="text-xs sm:text-sm font-bold text-white">
             Cargo Track API + Tahograf G2V2 + Google Maps + Facturare CMR
           </div>
-          <p className="text-xs text-slate-400">
+          <p className="hidden sm:block text-xs text-slate-400">
             Monitorizează în timp real norma Euro, kilometrajul din CAN-Bus, expirările ITP/RCA/ATP și documentele șoferilor.
           </p>
         </div>

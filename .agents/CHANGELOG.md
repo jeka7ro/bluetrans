@@ -1,5 +1,231 @@
 # Jurnal de modificări (Antigravity ↔ Paperclip)
 
+### 2026-11-12 19:07 — Optimizare radicală a spațiului vertical DOAR pe Mobil (`< 640px`): eliminare texte explicative inutile, filtre grupate câte 2 pe rând și antete pe un singur rând, păstrând PC-ul 100% neschimbat (`FleetVinAndDossierModal.tsx`, `TmsOperationsView.tsx`, `OrdersAndTripsView.tsx`, `SmartGroupageView.tsx`, `TrailerSwapView.tsx`, `ClientOffersView.tsx`, `TodayView.tsx`, `UsersAdminView.tsx`, `App.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **`Flotă → Mașinile mele` pe Mobil (`< 640px`, `src/components/FleetVinAndDossierModal.tsx`)**:
+     - Scos complet pe mobil (`hidden sm:block`) paragraful explicativ pe 4 rânduri (`Click pe Acte sau + Adaugă act...`) și eticheta `DEMO · ilustrații studio` care ocupau un rând separat.
+     - Adunat pe **un singur rând** titlul `Mașinile mele`, contorul `47/47` și filtrul rapid `43 acte`.
+     - Pus filtrele `⇅ Sortează: Implicit` și `Toate (47)` **câte 2 pe același rând** (`grid-cols-2`), iar `▤ Compact` + `Carduri / Listă` pe **un singur rând compact** (economisind peste `230px` de înălțime pe iPhone, astfel încât cardul primului camion și al doilea camion se văd direct fără scroll; pe PC `>= 640px` layoutul rămâne 100% identic).
+  2. **Toate celelalte ecrane pe Mobil (`< 640px`) fără texte inutile și fără rânduri pierdute (`TmsOperationsView.tsx`, `OrdersAndTripsView.tsx`, `SmartGroupageView.tsx`, `TrailerSwapView.tsx`, `ClientOffersView.tsx`, `TodayView.tsx`, `UsersAdminView.tsx`, `App.tsx`)**:
+     - **Șoferi, Clienți, Facturi (`TmsOperationsView.tsx`)**: eliminat descrierile lungi pe mobil (`hidden sm:block`), pus titlul + butonul `+ Șofer nou` / `+ Client nou` pe un singur rând și compactat cardurile KPI de jos câte 2 pe rând (`grid-cols-2`).
+     - **Comenzi & curse (`OrdersAndTripsView.tsx`)**: eliminat pe mobil caseta dublată de titlu `Comenzi & curse` și pus butonul `+ Comandă` direct pe același rând cu căutarea; în wizardul de alocare, pus pașii pe un singur rând (`grid-cols-3`) și câmpurile câte 2 pe rând (`grid-cols-2`).
+     - **Grupaje, Schimburi, Oferte, Operațional & Utilizatori**: eliminat textele descriptive de umplutură pe mobil, pus filtrele și cardurile de selecție câte 2 pe rând (`grid-cols-2`), cele 3 contoare din `Operațional` pe un singur rând (`grid-cols-3`), filtrele de rol din `Utilizatori` pe un singur rând (`grid-cols-5`) și ascuns rândurile standalone `DEMO` pe mobil.
+- **Fișiere:** `src/components/FleetVinAndDossierModal.tsx`, `src/components/TmsOperationsView.tsx`, `src/components/OrdersAndTripsView.tsx`, `src/components/SmartGroupageView.tsx`, `src/components/TrailerSwapView.tsx`, `src/components/ClientOffersView.tsx`, `src/components/TodayView.tsx`, `src/components/UsersAdminView.tsx`, `src/App.tsx`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual pe Mobil (`390×844`) și Desktop (`1480×960` — 100% neschimbat)
+
+### 2026-11-12 18:54 — Container meteo semitransparent (frosted-glass) pe hartă cu orașe, iconițe SVG, stare meteo și temperatură live când modul Meteo este activ (`EuropeLiveMap.tsx`, `accuWeatherCanvas.ts`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Container semitransparent frosted-glass (`.tms-weather-hud-glass`) activat automat odată cu comutatorul Meteo (`showWeatherRadar`) (`src/components/EuropeLiveMap.tsx`, `src/index.css`)**:
+     - Afișat direct pe hartă (atât în fereastra normală din `Control Center`, cât și în modul `Full Screen`), cu fundal bleumarin semitransparent (`rgba(12, 31, 61, 0.72)` → `rgba(9, 23, 46, 0.78)` + `backdrop-filter: blur(14px) saturate(165%)`) prin care se vede discret harta dedesubt, pe care apar **orașele**, **iconițele SVG meteo dedicate** (`Senin`, `Parțial noros`, `Noros`, `Ceață`, `Burniță / Ploaie`, `Ninsoare`, `Vânt`), **starea vremii** și **temperatura live (`°C`)**.
+     - Pe **PC / Tabletă (`>= 640px`)**: panou pliabil în colțul dreapta-sus sub butoanele hărții (`Vreme pe Coridor` la vedere largă peste Europa cu hub-urile `Oradea`, `Cluj-Napoca`, `Budapesta`, `Viena`, `München`, `Köln`, `Rotterdam`, `Malmö`, `Stockholm`, și adaptare automată `Vreme în Zonă` la `zoom >= 6` cu orașele din zona vizibilă — ex. `Cluj-Napoca`, `Oradea`, `Szolnok`, `Szeged`, `Budapesta`, `București`). Click pe orice oraș centrează harta direct pe el; când modul Meteo este oprit, containerul se ascunde automat.
+     - Pe **Mobil (`< 640px`)**: bandă orizontală compactă semitransparentă în partea de jos a hărții (`bottom-5`, deasupra barei de atribuire), cu iconiță + oraș + stare meteo + temperatură pe fiecare capsulă.
+  2. **Etichete geografice regionale pe hartă la zoom apropiat (`src/utils/accuWeatherCanvas.ts`)**:
+     - Activat `pillAnchor` + `minZoomForPill` pentru `Cluj-Napoca` (`zoom >= 6`) și `Szeged` (`zoom >= 7`), astfel încât la zoom pe România/Transilvania apare și pilula meteo direct pe poziția geografică a orașului.
+- **Fișiere:** `src/components/EuropeLiveMap.tsx`, `src/utils/accuWeatherCanvas.ts`, `src/index.css`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual pe Desktop (vedere largă & zoom pe Cluj/România, Dark & Light Mode) și Mobil (`390×844`)
+
+### 2026-11-12 18:43 — Aliniere 1:1 pe aceeași nuanță Dark Navy a fundalului paginii (`#0b1e3b`) pentru Sidebar, Header, Header Bar-ul din Planificare și bara mobilă (`index.css`, `App.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Înlocuit albastrul cobalt deschis (`#173573` / `#132c60`) de pe **Sidebar** (`.tps-navy-sidebar`), **Header-ul de sus** (`.tps-navy-header` + `.tps-top-header` pe mobil), **Header Bar-ul din Planificare** (`.planning-toolbar-header`) și **bara mobilă fixă de jos** (`.tps-mobile-dock` + `.tps-mobile-dock::after`) cu **exact aceeași nuanță de bleumarin închis ca fundalul paginii** (`.tahoe-wallpaper`: `#0c2244` → `#0b1e3b` → `#09172e`) și borduri discrete `border-white/10`, obținând o suprafață unitară pe tot Modul Dark (nici neagră, nici albastru aprins).
+- **Fișiere:** `src/index.css`, `src/App.tsx`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual pe Desktop (`Control Center` & `Planificare`, `1480×960`) și Mobil (`390×844`)
+
+### 2026-11-12 18:29 — Plăcuțe de înmatriculare DRPCIV 3D ultra-realiste din aluminiu ambutisat (`RO | BH 46 STS` pe Dark și `RO | BH 56 STS` pe Light) pe rezoluție Retina `2560×1440` (`LoginView.tsx`, `public/login/highway-*-desktop-*.webp`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Eliminat complet dreptunghiul alb plat lipit anterior peste bară și reconstruit ambele plăcuțe de înmatriculare pornind de la fotografiile master brute ridicate la rezoluție **`2560×1440` (`2x` QHD Retina)**:
+    1. **Model 3D fizic DRPCIV România (`SR 13078` / `DIN 1451`) randat la `2080×480 px` (`4×` supersampling)**: suport negru mat din plastic ABS turnat în locașul barei Scania, ramă interioară ștanțată, bandă UE albastră cu cercul celor 12 stele aurii + **`RO`**, capace discrete de prindere și caractere embosate în relief din aluminiu cu umbră de ștanțare și reflexie metalică pe muchia superioară (**`BH 46 STS`** pe Modul Dark și **`BH 56 STS`** pe Modul Light).
+    2. **Proiecție omografică 3D exactă pe curbura barei Scania + calibrare optică DSLR**: aliniere la sub-pixel pe cele 4 colțuri reale ale locașului din bară (inclusiv panta de perspectivă 3/4 de pe camionul de noapte), umbră fizică de contact sub buza superioară a barei, temperatură de culoare calibrată pe expunerea reală (argintiu-albăstrui de noapte `[162, 174, 200]` pe Dark vs aluminiu reflectorizant de zi `[222, 226, 231]` pe Light) și granulație identică senzorului foto.
+  - Actualizat `src/components/LoginView.tsx` cu dimensiunile native `2560×1440` și cache-bust `?v=drpciv5` pe ambele teme.
+- **Fișiere:** `src/components/LoginView.tsx`, `public/login/highway-dark-desktop-1x.webp`, `public/login/highway-dark-desktop-2x.webp`, `public/login/highway-light-desktop-1x.webp`, `public/login/highway-light-desktop-2x.webp`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat la zoom 400% Retina și în ecran complet (`1260×950`) pe Dark & Light Mode
+
+### 2026-11-12 18:18 — Readucere peisaj alpin vibrant cu munți înzăpeziți și pădure deasă de brazi pe Modul Deschis la Autentificare, păstrând 100% camionul Scania `BH 56 STS` (`LoginView.tsx`, `public/login/highway-light-desktop-*.webp`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Păstrat neschimbat camionul Scania R 500 Highline în unghi 3/4 din față (`SCANIA`, agregat `THERMO KING`, număr real de flotă **`RO | BH 56 STS`** și semiremorcă frigorifică **`<<< BLUE TRANS SPEDITION · INTERNATIONAL FRIGO & BI-TEMP LOGISTICS`**) și readus integral fundalul alpin inițial cu **pădure deasă de brazi verzi** pe ambele laturi ale autostrăzii, **munți stâncoși înzăpeziți** luminați de soare atât în stânga deasupra brazilor, cât și pe valea din dreapta, cer albastru limpede fără ceață lăptoasă și autostradă curată fără panouri metalice.
+  - Calibrat `md:object-[36%_50%]` + dimensiuni intrinseci `width={1920} height={1080}` și cache-bust `?v=alpine4` în `src/components/LoginView.tsx`, astfel încât atât pe ferestre `4:3` (`1260×950`), cât și pe ecrane `16:9` (`1520×920`), brazii din stânga, vârfurile înzăpezite, cabina `BH 56 STS` și inscripția `BLUE TRANS SPEDITION` sunt 100% vizibile și neacoperite de cardul de autentificare.
+- **Fișiere:** `src/components/LoginView.tsx`, `public/login/highway-light-desktop-1x.webp`, `public/login/highway-light-desktop-2x.webp`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual la `1260×950` și `1520×920`
+
+### 2026-11-12 18:05 — Eliminare 100% linii canvas sintetice și ploaie falsă pe orașe cu `0.0 mm` precipitații + verificare încrucișată meteo live (`accuWeatherCanvas.ts`, `EuropeLiveMap.tsx`, `planningRouteSync.ts`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Eliminare completă a liniilor diagonale și picăturilor desenate pe `<canvas>` (`src/utils/accuWeatherCanvas.ts`, `src/components/EuropeLiveMap.tsx`)**:
+     - Scos complet `startAccuWeatherCanvasAnimation` și elementele `<canvas>` suprapuse peste hartă care desenau 84 de dungi diagonale albastru-alb peste toată Europa (inclusiv peste țări uscate precum Germania, Olanda, Polonia și Marea Britanie) și păreau ploaie artificială permanentă.
+     - Pe hartă rămâne **exclusiv** stratul radar Doppler real de la **RainViewer** (`https://api.rainviewer.com/public/weather-maps.json`), care este 100% transparent peste zonele uscate și afișează ecouri radar doar acolo unde radarele meteorologice naționale detectează efectiv precipitații în timp real.
+  2. **Regulă meteorologică strictă pe cantitatea reală măsurată (`precipitation / rain / showers / snowfall > 0`) (`src/utils/accuWeatherCanvas.ts`)**:
+     - Corectat `mapWmoCodeToWeather` + `fetchLiveEuropeanWeather` (cu `rain`, `showers`, `snowfall` și `cloud_cover` din `api.open-meteo.com`) astfel încât niciun oraș să nu mai fie afișat cu `Ploaie` / `Burniță` când precipitațiile reale măsurate în acel moment sunt `0.0 mm` (ex. `Viena`, `München`, `Stuttgart`, `Bratislava` aveau cod sinoptic rezidual `WMO 61`, dar `precipitation: 0 mm` și `MET Norway: cloudy, 0 mm` — acum afișează corect `Noros`).
+     - Acolo unde plouă cu adevărat acum (verificat încrucișat pe `Open-Meteo` + `MET Norway ECMWF` + `RainViewer`: ex. `Oradea` `0.2 mm`, `Szeged` `0.5 mm`, `Stockholm` `0.1 mm`, `Göteborg` `0.3 mm`, `Milano` `0.3 mm`), eticheta afișează precipitația reală împreună cu milimetrii măsurați (`Burniță (0.2 mm)`).
+  3. **Eliminare completă a valorilor statice de tip `'rain'` / `'snow'` din `CORRIDOR_ROUTES` și din lista de puncte de rută (`src/utils/planningRouteSync.ts`, `src/components/EuropeLiveMap.tsx`)**.
+- **Fișiere:** `src/utils/accuWeatherCanvas.ts`, `src/components/EuropeLiveMap.tsx`, `src/utils/planningRouteSync.ts`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat încrucișat live cu `api.open-meteo.com`, `api.met.no` și `api.rainviewer.com`
+
+### 2026-11-12 17:54 — Aerisire și reorganizare completă a zonei de sus din Planificare + mutare control perete despărțitor Bi-Temp exclusiv în fereastra de detaliu a cursei/remorcii (`Planning7DaysView.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Eliminare buton `Bi-Temp 13.6m (...)` și sertar global din ecranul principal de Planificare (`src/components/Planning7DaysView.tsx`)**:
+     - Scos complet din headerul calendarului butonul `Bi-Temp 13.6m (BH 67 STS)`, sertarul global `showBiTempInspector` și pilula lungă de instrucțiuni (`Ordinea comenzilor pe zile · Click pt. Creare Rapidă · Drag & Drop cu confirmare`) care aglomerau partea de sus a paginii și forțau împărțirea pe două rânduri pe rezoluții medii.
+  2. **Header ordonat pe un singur rând pe PC (`61px`) și compact pe 2 rânduri curate pe Mobil (`src/components/Planning7DaysView.tsx`, `src/index.css`)**:
+     - **Stânga:** titlul lunii (`NOIEMBRIE 2026`) + selectorul de săptămână (`< 9 – 15 Noi 2026 >`) așezat firesc lângă lună (și buton `Săpt. curentă` doar când ești pe altă săptămână); pe mobil (`< 640px`), butonul `+ Cursă` stă aliniat pe același prim rând în dreapta.
+     - **Dreapta:** filtrul segmentat `Toate / Active / Trecute` + butonul principal `+ Cursă nouă`.
+     - Înlocuit gradientul mov-albastru încărcat cu bara `.planning-toolbar-header` în nuanță Marine Navy pe Dark Mode și alb/slate curat pe Light Mode, plus antet compact pe 2 linii (`LUN 9` + tonaj/LDM) pentru coloanele celor 7 zile.
+  3. **Mutare reglaj perete despărțitor Bi-Temp (`Zona 1 / Zona 2`) exclusiv în fereastra de detaliu a cursei/remorcii (`selectedCardDetail`)**:
+     - Adăugat panoul pliabil la cerere (`<details class="planning-bitemp-disclosure">`) în secțiunea `TRASEUL COMPLET AL CURSEI & HARTA RUTIERĂ LIVE` a ferestrei modale de detaliu cursă/remorcă, cu slider nativ `.bitemp-range-slider` (`accent-color` + fallback `@supports not`) și sumar LDM pe segmente pentru remorca respectivă.
+- **Fișiere:** `src/components/Planning7DaysView.tsx`, `src/index.css`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual pe Desktop (`1480×960` și `1280×900`), Mobil (`390×844`) și în fereastra de detaliu cursă
+
+### 2026-11-12 17:41 — Încadrare 3/4 din față complet vizibilă pe Modul Deschis + numere reale de flotă Bihor (`BH 56 STS` / `BH 46 STS`) pe ambele teme de Autentificare (`LoginView.tsx`, `public/login/highway-light-desktop-*.webp`, `public/login/highway-dark-desktop-*.webp`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Regenerată fotografia de zi (**Modul Deschis**) pe același unghi 3/4 din față ca pe **Modul Închis** (cu toată grila frontală `SCANIA`, ambele faruri, agregatul `THERMO KING` și întreaga semiremorcă `<<< BLUE TRANS SPEDITION · INTERNATIONAL FRIGO & BI-TEMP LOGISTICS` vizibile complet chiar și pe ferestre mai înguste `1260×950`) și număr real din flota Blue Trans cu `BH`: **`RO | BH 56 STS`** pe Modul Deschis și **`RO | BH 46 STS`** pe Modul Închis.
+  - Calibrat `object-position` în `src/components/LoginView.tsx` (`md:object-[46%_50%]` pe Light și `md:object-[55%_52%]` pe Dark) ca nici partea din față a cabinei și nici inscripția de pe remorcă să nu fie tăiate pe nicio rezoluție desktop.
+- **Fișiere:** `src/components/LoginView.tsx`, `public/login/highway-light-desktop-1x.webp`, `public/login/highway-light-desktop-2x.webp`, `public/login/highway-dark-desktop-1x.webp`, `public/login/highway-dark-desktop-2x.webp`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual la `1260×950` și `1520×920` pe Light și Dark Mode
+
+### 2026-11-12 17:32 — Sidebar, Header și bara mobilă de jos trecute pe Navy Blue autentic (`#173573` → `#132c60`), eliminând nuanța neagră `#080d1a` (`App.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Înlocuit fundalul aproape negru (`bg-[#080d1a]/95` / `#060913`) de pe **Sidebar-ul stâng** (`<aside>`), **Header-ul superior** (`<header>` în aplicația principală și în Portal Șoferi) și **bara mobilă fixă de jos** (`.tps-mobile-dock` + `.tps-mobile-dock::after`) cu o nuanță autentică de **Navy Blue corporativ** (`.tps-navy-sidebar` și `.tps-navy-header`: `#173573` → `#132c60` → `#0f2450`, borduri discrete `sky-300/20` și card de profil în ton bleumarin), păstrând 100% intactă varianta albă pe **Modul Deschis (`[data-theme="light"]`)**.
+- **Fișiere:** `src/App.tsx`, `src/index.css`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `http://localhost:3645` și `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual pe Desktop (`1480×960`) și Mobil (`390×844`)
+
+### 2026-11-12 17:22 — Fundal foto realist de autostradă (Noapte pe Modul Dark / Zi pe Modul Deschis) pe ecranul de Autentificare, cu camioane inscripționate `BLUE TRANS SPEDITION` ca în simularea 3D (`LoginView.tsx`, `index.css`, `public/login/*.webp`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Scene fotografice comerciale realiste de autostradă europeană pentru Dark Mode și Light Mode (`public/login/*.webp`)**:
+     - **Modul Dark (Noapte / Blue-Hour Autobahn)**: cap tractor Scania NextGen albastru metalizat (`B 500 BTS`) + agregat `THERMO KING` + semiremorcă frigorifică albă inscripționată clar **`BLUE TRANS SPEDITION · INTERNATIONAL FRIGO & BI-TEMP LOGISTICS`** (identic cu simularea 3D din `TruckShowroom3D.tsx`) pe autostrada udă iluminată noaptea, plus variantă dedicată de mobil (`9:16`) cu camionul `BLUE TRANS SPEDITION` pe viaductul iluminat (`Linz / Vienna`).
+     - **Modul Deschis (Zi / Autostradă Alpină însorită)**: cap tractor Scania Highline albastru metalizat + semiremorcă frigorifică albă inscripționată **`/// BLUE TRANS SPEDITION · INTERNATIONAL FRIGO & BI-TEMP LOGISTICS`** în plină zi pe autostrada alpină (`A1 / A2`), plus variantă dedicată de mobil (`9:16`) cu viaductul montan însorit.
+     - Livrate ca seturi responsive `.webp` (`1x` și `2x`, `91–233 KB`) prin `<picture>` nativ cu `fetchPriority="high"` pe tema activă și `fetchPriority="low"` + `loading="lazy"` pe tema inactivă pentru comutare instantanee fără flicker.
+  2. **Încadrare dedicată PC + Mobil + uniformizare autofill în cardul glass (`src/components/LoginView.tsx`, `src/index.css`)**:
+     - Pe **PC (`>= 768px`)**, cardul frosted-glass de **Autentificare** este poziționat elegant pe dreapta, lăsând camionul și inscripția **`BLUE TRANS SPEDITION`** 100% vizibile și neacoperite în jumătatea stângă.
+     - Pe **Mobil (`< 768px`)**, cardul este ancorat ergonomic în jumătatea inferioară, lăsând camionul **`BLUE TRANS SPEDITION`** de pe viaduct 100% vizibil deasupra cardului.
+     - Uniformizat stilul `input:-webkit-autofill` în `.login-auth-glass` pentru Dark Mode și Light Mode.
+- **Fișiere:** `src/components/LoginView.tsx`, `src/index.css`, `public/login/highway-dark-desktop-1x.webp`, `public/login/highway-dark-desktop-2x.webp`, `public/login/highway-dark-mobile-1x.webp`, `public/login/highway-dark-mobile-2x.webp`, `public/login/highway-light-desktop-1x.webp`, `public/login/highway-light-desktop-2x.webp`, `public/login/highway-light-mobile-1x.webp`, `public/login/highway-light-mobile-2x.webp`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual pe Desktop (`1480×920`) și Mobil (`390×844`) în Dark Mode și Light Mode
+
+### 2026-11-12 17:08 — Eliminare fundal alb de la camioane, semiremorci și utilitare în Dark Mode + decupaje de studio transparente `.webp` și fundal showroom întunecat (`FleetVinAndDossierModal.tsx`, `index.css`, `public/fleet/*.webp`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Decupare transparentă 1:1 a tuturor celor 17 fotografii de studio din flotă (`public/fleet/*.webp`)**:
+     - Generate decupaje `.webp` cu canal alpha curat (prin `VNGenerateForegroundInstanceMaskRequest` pe rezoluția nativă `1200×896`) pentru toate cele 17 modele din `public/fleet/` (capete tractor Scania & Volvo în toate culorile OEM, semiremorci frigorifice Schmitz Cargobull & Krone albe/albastre, Mercedes Sprinter Frigo și autoturisme Dacia Logan / Mercedes C250), eliminând 100% peretele și podeaua albă din JPEG-urile originale și păstrând alinierea exactă la pixel a inscripționărilor `BLUE TRANS SPEDITION` și `SCANDEXPRES` (`TrailerPhotoWithLivery`), reducând totodată dimensiunea totală a imaginilor de ~6 ori (`~8.7 MB` → `~1.4 MB`).
+  2. **Fundal showroom întunecat (`.fleet-studio-thumb` + `.fleet-studio-cutout`) pe carduri și în fereastra Dosar (`Poză`)**:
+     - Eliminat `style={{ backgroundColor: '#ffffff' }}` de pe miniaturile cardurilor din **Flotă → Mașinile mele → Carduri** și `bg-white` din `TrailerPhotoWithLivery` (`mode="dossier"`) + `VehicleStudioRender` (`src/components/FleetVinAndDossierModal.tsx`).
+     - Adăugat în `src/index.css` clasa `.fleet-studio-thumb` (gradient radial de showroom bleumarin întunecat în Dark Mode și studio luminos curat în `[data-theme="light"]`), izolare de blending (`isolation: isolate`) pentru logo-urile aplicate în perspectivă pe semiremorci și umbră de contact sub roți (`filter: drop-shadow(...)` pe `.fleet-studio-cutout`).
+- **Fișiere:** `src/components/FleetVinAndDossierModal.tsx`, `src/index.css`, `public/fleet/*.webp` (17 fișiere noi), `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat vizual pe Mobil (`390×844`) și Desktop (`1480×1080`) în Dark Mode și Light Mode (camioane + semiremorci + vedere `Poză` din dosar, `brokenImages = []`)
+
+### 2026-11-12 16:45 — Toate barele de taburi de sus afișate integral pe un singur rând pe mobil (`< 640px`), fără scroll orizontal și fără trunchiere, cu păstrarea 100% intactă a variantei de PC (`FleetVinAndDossierModal.tsx`, `TmsOperationsView.tsx`, `App.tsx`, `Planning7DaysView.tsx`, `OrdersAndTripsView.tsx`, `SmartGroupageView.tsx`, `CmrAndInvoiceModal.tsx`, `UsersAdminView.tsx`, `DemoBadge.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Dosarul tehnic al camionului & semiremorcii (`VehicleDossierModal` în `src/components/FleetVinAndDossierModal.tsx`)**:
+     - Transformarea barei de sus cu cele 4 taburi pe mobil (`< 640px`) într-un singur rând fix (`grid-cols-4` / `grid-cols-3` pentru utilitare singulare) cu iconiță + etichetă completă fără trunchiere (**`Tractor`** · **`Remorcă`** · **`Ansamblu`** · **`Editare`**), întrucât numerele de înmatriculare (`IF 96 STS + Semiremorcă BH 75 STS`) sunt deja afișate chiar deasupra în titlul ferestrei; pe `sm:` (`>= 640px`, PC/tabletă) rămân neschimbate etichetele complete (`Cap tractor (...)`, `Semiremorcă (...)`, `Ansamblu, anvelope & acte`, `Editează VIN & date`).
+     - Adaptat pe un singur rând (`grid-cols-2`) și comutatorul `Tractor / Remorcă` din tabul de editare polițe.
+  2. **Toate celelalte bare de taburi superioare din aplicație pe mobil (`< 640px`)**:
+     - **Flotă (`src/components/TmsOperationsView.tsx` + `src/components/DemoBadge.tsx`)**: toate cele 4 secțiuni (**`Flotă`** · **`Șoferi`** · **`Clienți`** · **`Facturi`**) încap integral pe un singur rând (`grid-cols-4`, `overflowPx = 0`).
+     - **Planificare & Comenzi (`src/App.tsx`, `src/components/Planning7DaysView.tsx`, `src/components/OrdersAndTripsView.tsx`, `src/components/SmartGroupageView.tsx`)**: cele 4 sub-taburi din Planificare (**`Calendar`** · **`Grupaje`** · **`Schimburi`** · **`Oferte`**), bara celor 7 zile ale săptămânii (**`LUN`..`DUM`** pe `grid-cols-7`), filtrul `Toate / Active / Trecute`, sub-taburile `Comenzi & curse / Vedere șofer`, filtrele `Toate / În tranzit / Finalizate` și filtrele de grupaj încap 100% pe un singur rând fără scroll orizontal.
+     - **Fereastra CMR / Factură (`src/components/CmrAndInvoiceModal.tsx`) & Utilizatori (`src/components/UsersAdminView.tsx`)**: taburile `CMR / Factură` + butonul `PDF` + `✕` și taburile `Utilizatori / Portal Șoferi` încap complet pe un singur rând pe ecrane de `360px`–`430px`.
+- **Fișiere:** `src/components/FleetVinAndDossierModal.tsx`, `src/components/TmsOperationsView.tsx`, `src/App.tsx`, `src/components/Planning7DaysView.tsx`, `src/components/OrdersAndTripsView.tsx`, `src/components/SmartGroupageView.tsx`, `src/components/CmrAndInvoiceModal.tsx`, `src/components/UsersAdminView.tsx`, `src/components/DemoBadge.tsx`, `src/index.css`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (activ live prin HMR pe `https://macbook-pro-m5.tail27c775.ts.net:8443/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat în Chrome la `390×844`, `360×800` și `1480×1080` (`overflowPx = 0`, `singleRow = true`, `truncatedSpans = []` pe toate barele de taburi)
+
+### 2026-11-12 15:49 — Fix ascultare IPv4 (`0.0.0.0:3645`) + `allowedHosts: true` pentru acces de pe iPhone prin Wi-Fi / `.local` / Tailscale (`vite.config.ts`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Schimbat `server.host` din `true` (care pe macOS deschidea socket `IPv6`) în `'0.0.0.0'` (socket `IPv4` pur `*:3645`) și adăugat `server.allowedHosts: true` în `vite.config.ts`, permițând accesul de pe iPhone atât prin IP local (`http://192.168.2.57:3645` / `http://MacBook-Pro-M5.local:3645`), cât și direct prin Tailscale (`http://100.79.113.57:3645` / `http://macbook-pro-m5:3645`).
+- **Fișiere:** `vite.config.ts`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (server repornit pe IPv4 `0.0.0.0:3645`)
+- **Build / Teste:** `lsof` confirmat `IPv4 TCP *:3645 (LISTEN)` · `HTTP 200` pe LAN și Tailscale
+
+### 2026-11-12 15:36 — Aliniere geografică 1:1 (eroare 0 px) a orașelor meteo și a punctelor de rută în Full Screen și la orice nivel de zoom (`accuWeatherCanvas.ts`, `EuropeLiveMap.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Eliminare completă a offset-urilor în grade (`badgeCoords`) și ancorare 100% pe coordonatele reale `[lat, lng]` (`src/utils/accuWeatherCanvas.ts`, `src/components/EuropeLiveMap.tsx`)**:
+     - Eliminat `badgeCoords` care deplasa artificial bulinele meteo în alte țări la deschiderea în **Full Screen** / zoom (`Rotterdam` în Anglia, `Köln` în Franța, `Viena` în Polonia, `Oradea` spre Ucraina/Moldova, `Malmö` în vestul Danemarcei).
+     - Fiecare stație meteo este acum plasată prin `L.marker([st.lat, st.lng])` exact în centrul geografic al orașului (`Oradea`, `Viena`, `Köln`, `Rotterdam`, `Malmö`, `Stockholm`, plus hub-urile secundare `Berlin`, `Varșovia`, `Göteborg`, `Milano`, `București`, `Budapesta`, `München`, `Frankfurt`, `Hamburg` la zoom apropiat), cu un punct luminos de ancorare de `7px` chiar pe oraș (`0.0 px` abatere față de proiecția OpenStreetMap) și tijă scurtă în pixeli de ecran (`pillAnchor` cu protecție la marginile ecranului pe mobil).
+  2. **Centrare matematică exactă pe `cp.coords` pentru punctele de control de pe rută (`custom-cp-dot`) + re-încadrare automată în Full Screen (`src/components/EuropeLiveMap.tsx`)**:
+     - Centrat cercul de `10px × 10px` al fiecărui oraș de pe rută la `left: -5px; top: -5px` pe `cp.coords` (cu eticheta orașului poziționată separat dedesubt), eliminând deviația verticală de `~8.5px` produsă anterior de `translate(-50%, -50%)` pe containerul combinat.
+     - Adăugat `fitCurrentScopeBounds()` responsiv (PC + Mobil) după `map.invalidateSize()` la intrarea/ieșirea din **Full Screen** și activat `scrollWheelZoom` / `doubleClickZoom` exclusiv în **Full Screen**.
+- **Fișiere:** `src/utils/accuWeatherCanvas.ts`, `src/components/EuropeLiveMap.tsx`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (verificat local; activ imediat și pe link-ul local Wi-Fi `http://192.168.2.57:3645/`)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat în Chrome Desktop Full Screen, Zoom in și Mobil Full Screen (`cpDotDeltaPx = 0` pe toate orașele)
+
+### 2026-11-12 15:18 — Activare acces local din rețeaua Wi-Fi pentru testare directă de pe telefon (`vite.config.ts`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Adăugat `server.host: true` în `vite.config.ts` și repornit serverul local pe portul `3645` cu expunere în rețeaua LAN (`http://192.168.2.57:3645/`), astfel încât aplicația poate fi deschisă direct de pe telefon pe același Wi-Fi înainte de push.
+- **Fișiere:** `vite.config.ts`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (verificat local)
+- **Build / Teste:** `http://192.168.2.57:3645/` activ și accesibil în LAN
+
+### 2026-11-12 15:16 — Vizibilitate și contrast ridicat pe etichetele de status ale cardurilor din Planificare (`✓ TRECUTĂ`, `● ACTIVĂ`, `◷ PLAN`) în Light Mode și Dark Mode (`Planning7DaysView.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  - Înlocuit clasele inline `bg-emerald-950/55 text-emerald-200`, `bg-amber-950/55 text-amber-200`, `bg-sky-950/55 text-sky-100` (care în Light Mode produceau un fundal gri-închis tulbure combinat cu text verde/albastru închis, cu contrast slab ~`1.4:1`) cu clasa dedicată **`.planning-status-badge`** (`data-status="active" | "planned" | "past"`).
+  - Mărit dimensiunea textului de la `8.5px` la `9.5px`, eliminat estomparea `opacity-80` de pe cardurile trecute și setat palete opace de contrast înalt (`> 7.3:1` WCAG AAA atât în Light Mode, cât și în Dark Mode, plus fallback `@media (forced-colors: active)`):
+    - **`● Activă`**: `#e0f2fe` fundal + `#0c4a6e` text + `#38bdf8` contur în Light Mode (`rgba(7,37,64,0.90)` + `#e0f2fe` în Dark Mode).
+    - **`◷ Plan`**: `#fef3c7` fundal + `#78350f` text + `#f59e0b` contur în Light Mode (`rgba(69,26,3,0.88)` + `#fef3c7` în Dark Mode).
+    - **`✓ Trecută`**: `#dcfce7` fundal + `#065f46` text + `#34d399` contur în Light Mode (`rgba(6,78,59,0.90)` + `#d1fae5` în Dark Mode).
+- **Fișiere:** `src/components/Planning7DaysView.tsx`, `src/index.css`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (verificat local; pregătit pentru commit & push la confirmare)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat în Chrome pe Light Mode și Dark Mode (`verify_status_badges_light.png`, `verify_status_badges_dark.png`)
+
+### 2026-11-12 15:11 — Popup nativ în aplicație de confirmare la mutarea comenzilor și planificare bazată pe ordinea comenzilor pe zi, fără restricție de oră (`Planning7DaysView.tsx`, `romaniaTime.ts`, `planningRouteSync.ts`, `OrdersAndTripsView.tsx`, `index.css`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **Planificare după zi + ordinea comenzilor (`Ordinea #1..#11`), fără blocare pe ore (`src/utils/romaniaTime.ts`, `src/utils/planningRouteSync.ts`, `src/components/Planning7DaysView.tsx`, `src/components/OrdersAndTripsView.tsx`)**:
+     - Eliminat blocarea pe oră pe ziua curentă (**`AZI`**) și pe toate zilele următoare: toate pozițiile **`Ordinea #1`..`Ordinea #11`** de pe **`AZI`** rămân 100% deschise indiferent de ora ceasului (inclusiv poziția `#1` din capul coloanei `AZI`).
+     - Înlocuit etichetele orare (`Ora 08:00`, `Ora / Rând calendar`, `oră trecută`) cu **`Ordinea #1`..`Ordinea #11`** în grila de 7 zile, în lista de mobil, în fereastra **Cursă nouă / Creare rapidă**, în **Detalii Cursă**, în **Comenzi & curse** și pe etichetele scurte din **Control Center** (`VIN · #1`).
+  2. **Popup în aplicație (`<dialog class="tps-confirm-dialog">`) la fiecare mutare sau reordonare de comandă (`src/components/Planning7DaysView.tsx`, `src/index.css`)**:
+     - La tragerea (Drag & Drop) unui card pe orice celulă sau peste alt card (inclusiv schimb de ordine `#1 ↔ #2` în aceeași zi, mutare pe **`AZI`** sau pe altă zi), precum și la schimbarea zilei/ordinii din fereastra de detalii, se deschide fereastra modală din aplicație **`Ești sigur că vrei să muți această comandă?`** cu sumarul comenzii, comparația **`Poziție actuală` → `Noua poziție`** și butoanele **`Nu, păstrează`** / **`Da, mută comanda`**.
+     - Implementat cu `<dialog>` nativ deschis prin `showModal()`, `closedby="any"` + fallback `pointerdown`/`pointerup` pe coordonate și izolare de scroll prin `overscroll-behavior: contain` pe `dialog:modal` și `overflow: hidden; overscroll-behavior: contain` pe `dialog::backdrop` (0 apeluri `window.confirm()` / `alert()`).
+- **Fișiere:** `src/components/Planning7DaysView.tsx`, `src/utils/romaniaTime.ts`, `src/utils/planningRouteSync.ts`, `src/components/OrdersAndTripsView.tsx`, `src/index.css`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (verificat local; pregătit pentru commit & push la confirmare)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat interactiv în Chrome pe Light Mode, Dark Mode și Mobil (`verify_move_confirm_popup_light.png`, `verify_move_confirm_popup_dark.png`, `verify_move_confirmed_result.png`, `verify_move_swap_popup_light.png`)
+
+### 2026-11-12 14:46 — Bară de jos mobilă ancorată 100% fix (fără fundal vizibil dedesubt la scroll), adăugare „Flotă” + buton compact „•••” și optimizări de confort pe mobil (`App.tsx`, `index.css`, `Planning7DaysView.tsx`, `OrdersAndTripsView.tsx`, `TmsOperationsView.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **„Flotă” direct în bara de jos + înlocuire „Mai mult / Meniu” cu buton icon-only `•••` (`src/App.tsx`)**:
+     - Toate cele 5 secțiuni operaționale principale (**`Hartă`**, **`Plan`**, **`Operațional`** cu badge live, **`Comenzi`**, **`Flotă`**) sunt acum afișate direct pe bara de jos pe mobil (fără trunchiere pe `360px–430px`), iar textul `Mai mult` / `Meniu` a fost eliminat și înlocuit cu butonul compact cu trei puncte **`•••`** (`aria-label="Meniu opțiuni secundare"`), care deschide sertarul secundar (`Utilizatori`, `Jurnal Audit Operațional` și cardul contului activ + versiune).
+  2. **Bară de jos ancorată etanș la bază (`bottom: 0; left: 0; right: 0;`) — zero fundal scrollat dedesubt (`src/App.tsx`, `src/index.css`)**:
+     - Eliminat spațiul plutitor `bottom-3 rounded-full` prin care se vedeau cardurile scrollate sub bară; ancorat `.tps-mobile-dock` pe toată lățimea la `bottom: 0` cu suprafață opacă `98%+`, padding `env(safe-area-inset-bottom)` și scut `::after` sub `top: 100%` pentru tranzițiile barei browserului mobil și overscroll.
+     - Înlocuit `overflow-x: hidden` pe `html, body` cu **`overflow-x: clip`** și setat `background-attachment: scroll` + `transform: translateZ(0)` pe `< 1024px`, rezolvând comportamentul nativ `sticky` / `fixed` în timpul scrollului pe iOS Safari și Chrome Android.
+  3. **Optimizări suplimentare de confort pe mobil (`< 1024px`, 0 modificări pe PC)**:
+     - În **Planificare** pe mobil (`Planning7DaysView.tsx`), intervalele orare trecute fără curse sunt grupate automat într-o linie compactă pliabilă (`N intervale trecute fără curse · Afișează`), aducând cursele active și `+ Creare rapidă` imediat în partea de sus a ecranului.
+     - La schimbarea tabului se sare instantaneu la `top: 0` (iar re-apăsarea tabului deja activ derulează lin înapoi sus), `touch-action: manipulation` elimină întârzierea la atingere, `scroll-snap-type: x proximity` fluidizează filtrele orizontale, iar `@supports (-webkit-touch-callout: none)` previne auto-zoom-ul nedorit pe iOS la atingerea câmpurilor de căutare.
+- **Fișiere:** `src/App.tsx`, `src/index.css`, `src/components/Planning7DaysView.tsx`, `src/components/OrdersAndTripsView.tsx`, `src/components/TmsOperationsView.tsx`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (verificat local; pregătit pentru commit & push la confirmare)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat în Chrome pe Mobil (`390×844` & `360×800`, Light/Dark, `gapBelowDockPx: 0`, `truncated: false`, `offenders: []`) și Desktop (`1480×1080` neschimbat)
+
+### 2026-11-12 09:49 — Vreme 100% reală în timp real (Open-Meteo + RainViewer) și eliminare completă încetinire browser (< 0.2ms/cadru) (`accuWeatherCanvas.ts`, `EuropeLiveMap.tsx`)
+- **Autor:** Antigravity
+- **Ce s-a făcut:**
+  1. **100% Vreme Reală Live pe Hartă și pe Etapele Curselor (`src/utils/accuWeatherCanvas.ts`, `src/components/EuropeLiveMap.tsx`)**:
+     - Eliminat complet toate fronturile ciclonice simulate (`SYNOPTIC_FRONTS`), dârele false de ploaie/ninsoare și pastilele meteo hardcodate (`+7°C · Ploaie`, `+8°C · Averse`, `+4°C · 42 km/h`, `+1°C · Ninsoare`).
+     - Conectat fluxul meteo real **Open-Meteo API** (`api.open-meteo.com/v1/forecast`, 24 de hub-uri rutiere europene într-un singur apel batch cu cache de 10 minute) + radarul real **RainViewer** (`api.rainviewer.com/public/weather-maps.json`), astfel încât harta afișează precipitații **exclusiv** acolo unde plouă sau ninge în realitate în acel moment în Europa.
+     - Pastilele meteo de pe hartă (`Oradea`, `Viena`, `Köln`, `Rotterdam`, `Malmö`, `Stockholm`) și toate etapele curselor (`resolveLiveCheckpointWeather`) afișează temperatura reală la 2m, codul meteo WMO real (`Senin`, `Parțial noros`, `Noros`, `Ceață`, `Burniță`, `Ploaie`, `Ninsoare`) și viteza/direcția reală a vântului la 10m.
+  2. **Optimizare extremă CPU/GPU (~98% reducere consum — zero alerte de încetinire browser)**:
+     - Înlocuit cele 7 straturi simultane `L.tileLayer` și timerul de opacitate la `0.95s` cu **1 singur strat** `L.tileLayer` pe cadrul curent RainViewer (actualizat la 5 minute).
+     - Eliminat toate apelurile `map.latLngToContainerPoint()`, `getBoundingClientRect()` și `createLinearGradient` / `createRadialGradient` din bucla `requestAnimationFrame`: câmpul real de vânt Open-Meteo este pre-proiectat într-o grilă ecran `16×10` (`Float32Array`) doar la `ResizeObserver` / `moveend` / `zoomend`, iar toți curenții de vânt se desenează în doar **3 apeluri batch `ctx.stroke()`** la `24 fps` (`dpr = 1`, durată de desenare măsurată `0.1ms/cadru`, `0` Long Tasks `> 50ms`), cu pauză automată în timpul tragerii hărții și când harta iese din ecran (`IntersectionObserver` + `contain: layout style paint`).
+- **Fișiere:** `src/utils/accuWeatherCanvas.ts`, `src/components/EuropeLiveMap.tsx`, `.agents/CHANGELOG.md`
+- **Ramură / Commit:** `main` (modificări locale verificate; fără alte modificări în afara vremii)
+- **Build / Teste:** `tsc -b` OK · `vite build` OK · audit `audit-gatekeeper` `🟢 VERDE — 100% SIGUR PENTRU PUSH` (`21/21`) · verificat în Chrome (`lastFrameDrawMs: 0.1ms`, `longTasksOver50ms: []`, `0` erori runtime, `verify_real_weather_light.png`, `verify_real_weather_dark.png`)
+
 ### 2026-11-11 18:50 — Hartă panoramică pe rând complet cu cele 2 carduri dedesubt + optimizare completă pentru mobil fără regresii pe PC (`EuropeLiveMap.tsx`, `App.tsx`, `OrdersAndTripsView.tsx`, `FleetVinAndDossierModal.tsx`, `i18n.tsx`, `index.css`, `index.html`)
 - **Autor:** Antigravity
 - **Ce s-a făcut:**

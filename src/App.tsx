@@ -13,6 +13,7 @@ import {
   Navigation,
   ListChecks,
   Users,
+  History,
 } from 'lucide-react';
 import {
   INITIAL_TRAILERS,
@@ -465,9 +466,14 @@ export function App() {
         sortBy: 'rca',
         nonce: Date.now(),
       });
+      const sameTab = activeTab === 'fleet';
       setActiveTab('fleet');
       setMobileMoreOpen(false);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({
+        top: 0,
+        left: 0,
+        behavior: sameTab ? 'smooth' : ('instant' as ScrollBehavior),
+      });
       return;
     }
     if (tab === 'fleet') {
@@ -477,17 +483,27 @@ export function App() {
         sortBy: 'default',
         nonce: Date.now(),
       });
+      const sameTab = activeTab === 'fleet';
       setActiveTab('fleet');
       setMobileMoreOpen(false);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({
+        top: 0,
+        left: 0,
+        behavior: sameTab ? 'smooth' : ('instant' as ScrollBehavior),
+      });
       return;
     }
+    const sameTab = activeTab === tab;
     setActiveTab(tab);
     setMobileMoreOpen(false);
     if (trailerId) {
       setSelectedTrailerId(trailerId);
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: sameTab ? 'smooth' : ('instant' as ScrollBehavior),
+    });
   };
 
   const handleCreateDirectTrip = (payload: DirectTripPayload) => {
@@ -1217,16 +1233,19 @@ export function App() {
   const navTarget = (id: string): string =>
     id === 'planning' && userRole === 'FINANCIAR' ? 'offers' : id;
 
-  const TAB_BARS: Record<string, { id: string; label: string; roles: UserRoleType[] }[]> = {
+  const TAB_BARS: Record<
+    string,
+    { id: string; label: string; mobileLabel: string; roles: UserRoleType[] }[]
+  > = {
     planning: [
-      { id: 'planning', label: 'Calendar 7 zile', roles: ['ADMIN', 'DISPECER'] },
-      { id: 'groupage', label: 'Grupaje & disponibilități', roles: ['ADMIN', 'DISPECER'] },
-      { id: 'swap', label: 'Schimburi de remorci', roles: ['ADMIN', 'DISPECER'] },
-      { id: 'offers', label: 'Oferte clienți', roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] },
+      { id: 'planning', label: 'Calendar 7 zile', mobileLabel: 'Calendar', roles: ['ADMIN', 'DISPECER'] },
+      { id: 'groupage', label: 'Grupaje & disponibilități', mobileLabel: 'Grupaje', roles: ['ADMIN', 'DISPECER'] },
+      { id: 'swap', label: 'Schimburi de remorci', mobileLabel: 'Schimburi', roles: ['ADMIN', 'DISPECER'] },
+      { id: 'offers', label: 'Oferte clienți', mobileLabel: 'Oferte', roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] },
     ],
     orders: [
-      { id: 'orders', label: 'Comenzi & curse', roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] },
-      { id: 'driver', label: 'Vedere șofer (cabină)', roles: ['ADMIN', 'DISPECER'] },
+      { id: 'orders', label: 'Comenzi & curse', mobileLabel: 'Comenzi & curse', roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] },
+      { id: 'driver', label: 'Vedere șofer (cabină)', mobileLabel: 'Vedere șofer', roles: ['ADMIN', 'DISPECER'] },
     ],
   };
   const DEMO_PAGES: Record<string, string> = {
@@ -1277,9 +1296,9 @@ export function App() {
   };
 
   const primaryMobileTabs =
-    navItems.length > 5 ? navItems.slice(0, 4) : navItems;
+    userRole === 'SOFER' ? navItems : navItems.slice(0, 5);
   const secondaryMobileTabs =
-    navItems.length > 5 ? navItems.slice(4) : [];
+    userRole === 'SOFER' ? [] : navItems.slice(5);
   const currentTabObj =
     navItems.find((n) => n.id === navGroupOf(activeTab)) || navItems[0];
 
@@ -1297,7 +1316,7 @@ export function App() {
           data-theme={theme}
           className="min-h-screen tahoe-wallpaper text-[#f5f5f7] flex flex-col transition-colors duration-200"
         >
-          <header className="w-full h-[76px] px-4 sm:px-6 bg-[#080d1a]/95 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 shrink-0">
+          <header className="tps-navy-header w-full h-[76px] px-4 sm:px-6 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <DynamicBrandLogo height={46} className="shrink-0" />
               <span className="hidden sm:inline-flex px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/35 whitespace-nowrap">
@@ -1367,7 +1386,7 @@ export function App() {
       {/* =====================================================================
           DESKTOP SIDEBAR — Docked Full-Height Sidebar
       ====================================================================== */}
-      <aside className="hidden lg:flex lg:w-64 bg-[#080d1a]/95 backdrop-blur-2xl border-r border-white/10 shrink-0 flex-col sticky top-0 h-screen overflow-hidden">
+      <aside className="tps-navy-sidebar hidden lg:flex lg:w-64 backdrop-blur-2xl border-r border-white/10 shrink-0 flex-col sticky top-0 h-screen overflow-hidden">
         {/* Brand Header: Dynamic Blue Trans Spedition Logo — Exact Same 76px Height as Top Header */}
         <div className="tps-brand-bar h-[76px] px-4 border-b border-white/10 flex items-center justify-center shrink-0">
           <DynamicBrandLogo
@@ -1482,7 +1501,7 @@ export function App() {
       ====================================================================== */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Edge-to-Edge Header Bar — Exact Same 76px Height as Sidebar Brand Header */}
-        <header className="tps-top-header sticky top-0 z-30 w-full h-[76px] px-4 sm:px-6 bg-[#080d1a]/95 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 sm:gap-4 shrink-0">
+        <header className="tps-top-header tps-navy-header sticky top-0 z-30 w-full h-[76px] px-4 sm:px-6 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 sm:gap-4 shrink-0">
           {/* Left Group: Mobile Brand Only (Hidden on Desktop to avoid duplicating sidebar brand) */}
           <div className="tps-mobile-brand-wrap flex lg:hidden items-center gap-2 min-w-0 shrink">
             <DynamicBrandLogo
@@ -1558,13 +1577,26 @@ export function App() {
         {/* Main View Container — Full Width with Safe Area for Floating Dock */}
         <main className="p-3 sm:p-4 lg:px-4 lg:py-4 pb-28 lg:pb-8 flex-1 max-w-full w-full mx-auto">
           {(tabBar.length > 1 || DEMO_PAGES[activeTab]) && (
-            <div className="flex flex-nowrap items-center justify-between gap-2 mb-3 overflow-x-auto no-scrollbar">
-              <div className="tps-subtab-scroller flex flex-nowrap items-center gap-2 overflow-x-auto no-scrollbar min-w-0">
-                {tabBar.length > 1 &&
-                  tabBar.map((tb) => (
+            <div
+              className={`${
+                tabBar.length > 1 ? 'flex' : 'hidden sm:flex'
+              } flex-nowrap items-center justify-between gap-2 mb-2.5 sm:mb-3`}
+            >
+              {tabBar.length > 1 && (
+                <div
+                  className={`tps-subtab-scroller w-full grid ${
+                    tabBar.length === 4
+                      ? 'grid-cols-4'
+                      : tabBar.length === 3
+                        ? 'grid-cols-3'
+                        : 'grid-cols-2'
+                  } gap-1.5 sm:w-auto sm:flex sm:flex-nowrap sm:items-center sm:gap-2 sm:overflow-x-auto no-scrollbar min-w-0`}
+                >
+                  {tabBar.map((tb) => (
                     <button
                       key={tb.id}
                       type="button"
+                      aria-current={activeTab === tb.id ? 'page' : undefined}
                       onClick={(e) => {
                         handleNavigate(tb.id);
                         e.currentTarget.scrollIntoView({
@@ -1572,23 +1604,25 @@ export function App() {
                           inline: 'nearest',
                         });
                       }}
-                      className={`tps-nav-tab-btn px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                      className={`tps-nav-tab-btn min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-2 py-2 sm:px-4 sm:py-2 rounded-full text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap sm:shrink-0 cursor-pointer ${
                         activeTab === tb.id
                           ? 'bg-[#0A84FF] border border-[#0A84FF] text-white shadow-lg shadow-[#0A84FF]/25'
                           : 'tahoe-btn-secondary text-white/80 hover:text-white'
                       }`}
                     >
-                      <span>{tb.label}</span>
+                      <span className="sm:hidden truncate">{tb.mobileLabel}</span>
+                      <span className="hidden sm:inline">{tb.label}</span>
                       {tb.id === 'offers' && pendingProposalsCount > 0 && (
-                        <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-[#FF9F0A]/25 text-[#FF9F0A]">
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-[#FF9F0A]/25 text-[#FF9F0A] shrink-0">
                           {pendingProposalsCount}
                         </span>
                       )}
                     </button>
                   ))}
-              </div>
+                </div>
+              )}
               {DEMO_PAGES[activeTab] && (
-                <div className={tabBar.length > 1 ? 'hidden sm:block shrink-0' : 'shrink-0'}>
+                <div className="hidden sm:block shrink-0">
                   <DemoBadge label={DEMO_PAGES[activeTab]} />
                 </div>
               )}
@@ -1703,69 +1737,103 @@ export function App() {
       </div>
 
       {/* =====================================================================
-          MOBILE FLOATING LIQUID GLASS DOCK (iOS 26 / macOS Tahoe Style)
+          MOBILE DOCKED STICKY BOTTOM BAR (5 Primary Tabs incl. Flotă + ••• Menu)
       ====================================================================== */}
       <nav
         aria-label="Meniu mobil"
-        className="tps-mobile-dock lg:hidden fixed bottom-3 left-2.5 right-2.5 z-50 rounded-full tahoe-pill-nav px-1.5 py-1.5 flex items-center justify-between gap-0.5"
+        className="tps-mobile-dock lg:hidden fixed inset-x-0 bottom-0 z-[45] flex items-center justify-between gap-0.5"
       >
         {primaryMobileTabs.map((item) => {
           const Icon = item.icon;
-          const isActive = navGroupOf(activeTab) === item.id;
+          const isActive = navGroupOf(activeTab) === item.id && !mobileMoreOpen;
           return (
             <button
               key={item.id}
               type="button"
               aria-current={isActive ? 'page' : undefined}
-              onClick={() => handleNavigate(navTarget(item.id))}
-              className={`tps-nav-tab-btn flex-1 min-w-0 min-h-[46px] flex flex-col items-center justify-center py-1.5 px-1.5 rounded-full border cursor-pointer ${isActive
-                  ? 'bg-[#007AFF] border-[#007AFF] text-white shadow-md shadow-[#007AFF]/40'
-                  : 'border-transparent text-white/65 hover:text-white'
-                }`}
+              onClick={() => {
+                setMobileMoreOpen(false);
+                handleNavigate(navTarget(item.id));
+              }}
+              className={`tps-nav-tab-btn tps-mobile-tab-item flex-1 min-w-0 min-h-[48px] flex flex-col items-center justify-center py-1 px-0.5 rounded-2xl border cursor-pointer ${
+                isActive
+                  ? 'bg-[#007AFF] border-[#007AFF] text-white shadow-sm shadow-[#007AFF]/35'
+                  : 'border-transparent text-white/70 hover:text-white'
+              }`}
             >
-              <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="text-[10px] font-semibold mt-0.5 whitespace-nowrap truncate max-w-full">
+              <span className="relative inline-flex items-center justify-center">
+                <Icon className="w-[17px] h-[17px] shrink-0" aria-hidden="true" />
+                {item.badge && (
+                  <span
+                    aria-hidden="true"
+                    className={`tps-mobile-tab-badge absolute -top-1.5 -right-2.5 min-w-[14px] h-[14px] px-1 rounded-full text-[8.5px] font-extrabold tabular-nums leading-none flex items-center justify-center ${
+                      isActive
+                        ? 'bg-white text-[#007AFF]'
+                        : 'bg-[#FF9F0A] text-[#080d1a]'
+                    }`}
+                  >
+                    {item.badge}
+                  </span>
+                )}
+              </span>
+              <span className="text-[9px] min-[380px]:text-[9.5px] sm:text-[10.5px] font-semibold mt-0.5 leading-tight tracking-[-0.015em] whitespace-nowrap max-w-full">
                 {item.shortLabel}
               </span>
             </button>
           );
         })}
 
-        {/* More Drawer Trigger for Secondary Tabs */}
-        {secondaryMobileTabs.length > 0 && (
+        {/* Compact Icon-Only Three-Dots (•••) Trigger — No "Mai mult" / "Meniu" Text */}
+        {userRole !== 'SOFER' && (
           <button
             type="button"
             aria-expanded={mobileMoreOpen}
-            aria-label="Mai multe secțiuni din meniu"
+            aria-controls="mobile-more-sheet"
+            aria-label="Meniu opțiuni secundare"
             onClick={() => setMobileMoreOpen((v) => !v)}
-            className={`tps-nav-tab-btn flex-1 min-w-0 min-h-[46px] flex flex-col items-center justify-center py-1.5 px-1.5 rounded-full border cursor-pointer ${secondaryMobileTabs.some((t) => t.id === navGroupOf(activeTab)) || mobileMoreOpen
-                ? 'bg-[#007AFF] border-[#007AFF] text-white shadow-md shadow-[#007AFF]/40'
-                : 'border-transparent text-white/65 hover:text-white'
-              }`}
+            className={`tps-nav-tab-btn tps-mobile-more-trigger relative w-10 min-[390px]:w-11 min-w-[42px] min-[390px]:min-w-[44px] min-h-[48px] shrink-0 flex items-center justify-center rounded-2xl border cursor-pointer ${
+              secondaryMobileTabs.some((t) => t.id === navGroupOf(activeTab)) ||
+              mobileMoreOpen
+                ? 'bg-[#007AFF] border-[#007AFF] text-white shadow-sm shadow-[#007AFF]/35'
+                : 'border-transparent text-white/70 hover:text-white'
+            }`}
           >
             {mobileMoreOpen ? (
-              <X className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <X className="w-5 h-5 shrink-0" aria-hidden="true" />
             ) : (
-              <MoreHorizontal className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <MoreHorizontal className="w-5 h-5 shrink-0" aria-hidden="true" />
             )}
-            <span className="text-[10px] font-semibold mt-0.5 whitespace-nowrap">Mai mult</span>
+            {secondaryMobileTabs.some((t) => Boolean(t.badge)) &&
+              !mobileMoreOpen && (
+                <span
+                  aria-hidden="true"
+                  className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#FF9F0A]"
+                />
+              )}
           </button>
         )}
       </nav>
 
-      {/* Mobile "Mai mult" Liquid Glass Sheet */}
+      {/* Mobile Secondary Options Sheet (•••) — Anchored Cleanly Above Docked Bottom Bar */}
       {mobileMoreOpen && (
         <div
+          id="mobile-more-sheet"
           onClick={() => setMobileMoreOpen(false)}
-          className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-end justify-center p-3 pb-24"
+          className="lg:hidden fixed inset-0 z-[44] bg-black/60 backdrop-blur-xs flex items-end justify-center px-3 pt-3 pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))]"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-[26px] tahoe-glass-elevated p-4 space-y-2"
+            className="w-full max-w-md rounded-[24px] tahoe-glass-elevated p-3.5 space-y-2 max-h-[75dvh] overflow-y-auto"
           >
-            <div className="text-xs font-semibold text-white/50 px-2 pb-1">
-              Meniu
+            <div className="flex items-center justify-between px-2 pb-0.5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-white/55">
+                Opțiuni & Cont
+              </span>
+              <span className="text-[10.5px] font-semibold tabular-nums text-white/45">
+                v{APP_VERSION}
+              </span>
             </div>
+
             {secondaryMobileTabs.map((item) => {
               const Icon = item.icon;
               const isActive = navGroupOf(activeTab) === item.id;
@@ -1778,26 +1846,88 @@ export function App() {
                     handleNavigate(navTarget(item.id));
                     setMobileMoreOpen(false);
                   }}
-                  className={`w-full px-4 py-3 rounded-full flex items-center justify-between text-left transition cursor-pointer ${isActive
+                  className={`w-full px-4 py-3 rounded-2xl flex items-center justify-between text-left transition cursor-pointer ${
+                    isActive
                       ? 'tahoe-btn-primary text-white'
                       : 'tahoe-card-inner text-white/90 hover:bg-white/10'
-                    }`}
+                  }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <Icon className="w-5 h-5 text-[#64D2FF]" />
-                    <div>
-                      <div className="text-sm font-bold">{item.label}</div>
-                      <div className="text-xs text-white/55">{item.sub}</div>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Icon
+                      className={`w-5 h-5 shrink-0 ${
+                        isActive ? 'text-white' : 'text-[#64D2FF]'
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold truncate">{item.label}</div>
+                      <div
+                        className={`text-xs truncate ${
+                          isActive ? 'text-white/80' : 'text-white/55'
+                        }`}
+                      >
+                        {item.sub}
+                      </div>
                     </div>
                   </div>
                   {item.badge && (
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-white/15">
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-white/15 shrink-0">
                       {item.badge}
                     </span>
                   )}
                 </button>
               );
             })}
+
+            <button
+              type="button"
+              onClick={() => {
+                setMobileMoreOpen(false);
+                setShowAuditLog(true);
+              }}
+              className="w-full px-4 py-3 rounded-2xl tahoe-card-inner text-white/90 hover:bg-white/10 flex items-center justify-between text-left transition cursor-pointer"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <History className="w-5 h-5 text-[#64D2FF] shrink-0" aria-hidden="true" />
+                <div className="min-w-0">
+                  <div className="text-sm font-bold truncate">Jurnal Audit Operațional</div>
+                  <div className="text-xs text-white/55 truncate">
+                    Istoric acțiuni & modificări sistem
+                  </div>
+                </div>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold tabular-nums bg-white/10 text-white/80 shrink-0">
+                {auditLog.length}
+              </span>
+            </button>
+
+            <div className="p-3 rounded-2xl tahoe-card-inner flex items-center justify-between gap-3 text-xs">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#30D158] shrink-0" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#64D2FF] truncate">
+                    {roleMeta[userRole].title}
+                  </span>
+                </div>
+                <div className="font-bold text-white truncate mt-0.5">
+                  {loggedUserName}
+                </div>
+                <div className="text-[11px] text-white/55 truncate">
+                  {loggedUserEmail}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMoreOpen(false);
+                  handleLogout();
+                }}
+                className="px-3 py-2 rounded-full bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-300 text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Ieșire</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -3,9 +3,9 @@ import { TrailerUnit } from '../data/mockData';
 import type { HourlyPlanningCard } from '../components/Planning7DaysView';
 import { lookupLearnedPlaceCoords, normalizePlaceKey } from '../components/GoogleMapsAddressInput';
 import {
+  getPlanningOrderNumber,
   getPlanningWeekMeta,
   getRomaniaZonedNow,
-  isPlanningSlotInPast,
   ROMANIA_TIME_ZONE,
 } from './romaniaTime';
 
@@ -121,7 +121,7 @@ export const CORRIDOR_ROUTES: Record<string, RouteDefinition> = {
       { city: 'Oradea', country: 'RO', coords: [47.0722, 21.9217], completed: true, eta: 'Plecat 06:00 (M35/M3)', techKm: '0 km (Start)', weatherType: 'sun', tempC: 11, weatherDesc: 'Senin · Uscat', freeLdmAfter: 1.2 },
       { city: 'Budapesta', country: 'HU', coords: [47.41, 19.15], completed: true, eta: 'Trecut 10:15 (M0/M1)', techKm: '295 km (+295 km)', weatherType: 'partly-cloudy', tempC: 10, weatherDesc: 'Parțial noros', freeLdmAfter: 1.2 },
       { city: 'Viena', country: 'AT', coords: [48.2082, 16.3738], completed: false, current: true, eta: 'Azi 14:30 (-4.2 LDM)', techKm: '540 km (+245 km)', weatherType: 'partly-cloudy', tempC: 9, weatherDesc: 'Parțial noros', freeLdmAfter: 5.4 },
-      { city: 'Köln', country: 'DE', coords: [50.9375, 6.9603], completed: false, eta: 'Mâine 08:30 (-3.0 LDM)', techKm: '1.310 km (+770 km)', weatherType: 'rain', tempC: 7, weatherDesc: 'Ploaie ușoară', freeLdmAfter: 8.4 },
+      { city: 'Köln', country: 'DE', coords: [50.9375, 6.9603], completed: false, eta: 'Mâine 08:30 (-3.0 LDM)', techKm: '1.310 km (+770 km)', weatherType: 'partly-cloudy', tempC: 7, weatherDesc: 'Parțial noros', freeLdmAfter: 8.4 },
       { city: 'Rotterdam', country: 'NL', coords: [51.9244, 4.4777], completed: false, eta: 'Mâine 15:00 (Final)', techKm: '1.580 km (+270 km)', weatherType: 'wind', tempC: 8, weatherDesc: 'Vânt de coastă', freeLdmAfter: 13.6 },
     ],
   },
@@ -163,7 +163,7 @@ export const CORRIDOR_ROUTES: Record<string, RouteDefinition> = {
     checkpoints: [
       { city: 'Szolnok', country: 'HU', coords: [47.1621, 20.1825], completed: true, eta: 'Plecat 04:30 (M4/M1)', techKm: '0 km (Start)', weatherType: 'sun', tempC: 10, weatherDesc: 'Senin · Uscat', freeLdmAfter: 0.0 },
       { city: 'München', country: 'DE', coords: [48.1351, 11.582], completed: false, current: true, eta: 'Azi 16:00 (-2.2 LDM)', techKm: '680 km (+680 km)', weatherType: 'partly-cloudy', tempC: 6, weatherDesc: 'Parțial noros', freeLdmAfter: 2.2 },
-      { city: 'Frankfurt', country: 'DE', coords: [50.1109, 8.6821], completed: false, eta: 'Mâine 07:00 (-4.4 LDM)', techKm: '1.070 km (+390 km)', weatherType: 'rain', tempC: 7, weatherDesc: 'Averse A3/A5', freeLdmAfter: 6.6 },
+      { city: 'Frankfurt', country: 'DE', coords: [50.1109, 8.6821], completed: false, eta: 'Mâine 07:00 (-4.4 LDM)', techKm: '1.070 km (+390 km)', weatherType: 'partly-cloudy', tempC: 7, weatherDesc: 'Parțial noros', freeLdmAfter: 6.6 },
       { city: 'Almere', country: 'NL', coords: [52.3508, 5.2647], completed: false, eta: 'Mâine 16:00 (Final)', techKm: '1.420 km (+350 km)', weatherType: 'wind', tempC: 8, weatherDesc: 'Vânt moderat', freeLdmAfter: 13.6 },
     ],
   },
@@ -214,10 +214,10 @@ export const CORRIDOR_ROUTES: Record<string, RouteDefinition> = {
       [59.3293, 18.0686], // Stockholm (E4)
     ],
     checkpoints: [
-      { city: 'Rotterdam', country: 'NL', coords: [51.9244, 4.4777], completed: true, eta: 'Plecat 05:00 (A12/A1)', techKm: '0 km (Start)', weatherType: 'rain', tempC: 9, weatherDesc: 'Ploaie ușoară', freeLdmAfter: 4.4 },
+      { city: 'Rotterdam', country: 'NL', coords: [51.9244, 4.4777], completed: true, eta: 'Plecat 05:00 (A12/A1)', techKm: '0 km (Start)', weatherType: 'partly-cloudy', tempC: 9, weatherDesc: 'Parțial noros', freeLdmAfter: 4.4 },
       { city: 'Hamburg', country: 'DE', coords: [53.5511, 9.9937], completed: false, current: true, eta: 'Azi 13:30 (-2.4 LDM)', techKm: '490 km (+490 km)', weatherType: 'partly-cloudy', tempC: 7, weatherDesc: 'Parțial noros', freeLdmAfter: 6.8 },
       { city: 'Malmö (Pod Øresund)', country: 'SE', coords: [55.605, 13.0038], completed: false, eta: 'Mâine 06:30 (-2.8 LDM)', techKm: '880 km (+390 km)', weatherType: 'wind', tempC: 4, weatherDesc: 'Vânt 42 km/h', freeLdmAfter: 9.6 },
-      { city: 'Stockholm', country: 'SE', coords: [59.3293, 18.0686], completed: false, eta: 'Mâine 16:30 (E4 Final)', techKm: '1.460 km (+580 km)', weatherType: 'snow', tempC: 1, weatherDesc: 'Lapoviță · E4', freeLdmAfter: 13.6 },
+      { city: 'Stockholm', country: 'SE', coords: [59.3293, 18.0686], completed: false, eta: 'Mâine 16:30 (E4 Final)', techKm: '1.460 km (+580 km)', weatherType: 'partly-cloudy', tempC: 5, weatherDesc: 'Parțial noros', freeLdmAfter: 13.6 },
     ],
   },
   'BH 74 STS': {
@@ -250,7 +250,7 @@ export const CORRIDOR_ROUTES: Record<string, RouteDefinition> = {
       { city: 'Oradea', country: 'RO', coords: [47.0722, 21.9217], completed: true, eta: 'Plecat Ieri (M35/M3)', techKm: '0 km (Start)', weatherType: 'sun', tempC: 12, weatherDesc: 'Senin · Uscat', freeLdmAfter: 1.2 },
       { city: 'Suben', country: 'AT', coords: [48.4064, 13.4314], completed: true, eta: 'Trecut 09:00 (A8)', techKm: '690 km (+690 km)', weatherType: 'partly-cloudy', tempC: 8, weatherDesc: 'Parțial noros', freeLdmAfter: 1.2 },
       { city: 'München', country: 'DE', coords: [48.1351, 11.582], completed: false, current: true, eta: 'La descărcare (-2.8 LDM)', techKm: '860 km (+170 km)', weatherType: 'partly-cloudy', tempC: 6, weatherDesc: 'Nori trecători', freeLdmAfter: 4.0 },
-      { city: 'Stuttgart', country: 'DE', coords: [48.7758, 9.1829], completed: false, eta: 'Azi 19:30 (A8 Final)', techKm: '1.090 km (+230 km)', weatherType: 'rain', tempC: 7, weatherDesc: 'Burniță A8', freeLdmAfter: 13.6 },
+      { city: 'Stuttgart', country: 'DE', coords: [48.7758, 9.1829], completed: false, eta: 'Azi 19:30 (A8 Final)', techKm: '1.090 km (+230 km)', weatherType: 'partly-cloudy', tempC: 7, weatherDesc: 'Parțial noros', freeLdmAfter: 13.6 },
     ],
   },
   'BH 91 STS': {
@@ -290,8 +290,8 @@ export const CORRIDOR_ROUTES: Record<string, RouteDefinition> = {
     checkpoints: [
       { city: 'Rotterdam', country: 'NL', coords: [51.9244, 4.4777], completed: true, eta: 'Plecat 07:30 (A15/A67)', techKm: '0 km (Start)', weatherType: 'wind', tempC: 9, weatherDesc: 'Vânt moderat', freeLdmAfter: 5.2 },
       { city: 'Venlo', country: 'NL', coords: [51.3704, 6.1724], completed: false, current: true, eta: 'Încărcare grupaj (A67)', techKm: '165 km (+165 km)', weatherType: 'partly-cloudy', tempC: 8, weatherDesc: 'Parțial noros', freeLdmAfter: 5.2 },
-      { city: 'Kolding', country: 'DK', coords: [55.4904, 9.4722], completed: false, eta: 'Mâine 05:00 (-3.2 LDM)', techKm: '690 km (+525 km)', weatherType: 'rain', tempC: 5, weatherDesc: 'Ploaie E45', freeLdmAfter: 8.4 },
-      { city: 'Göteborg', country: 'SE', coords: [57.7089, 11.9746], completed: false, eta: 'Mâine 14:00 (E6 Final)', techKm: '1.180 km (+490 km)', weatherType: 'snow', tempC: 2, weatherDesc: 'Lapoviță ușoară', freeLdmAfter: 13.6 },
+      { city: 'Kolding', country: 'DK', coords: [55.4904, 9.4722], completed: false, eta: 'Mâine 05:00 (-3.2 LDM)', techKm: '690 km (+525 km)', weatherType: 'partly-cloudy', tempC: 5, weatherDesc: 'Parțial noros', freeLdmAfter: 8.4 },
+      { city: 'Göteborg', country: 'SE', coords: [57.7089, 11.9746], completed: false, eta: 'Mâine 14:00 (E6 Final)', techKm: '1.180 km (+490 km)', weatherType: 'partly-cloudy', tempC: 4, weatherDesc: 'Parțial noros', freeLdmAfter: 13.6 },
     ],
   },
   'BH 23 STS': {
@@ -815,8 +815,9 @@ export function getPlanningCardLifecycle(
   const dayMeta =
     weekMeta.days[Math.min(6, Math.max(0, card.dayIndex))] || weekMeta.days[0];
   const isoDate = card.isoDate || dayMeta.isoDate;
-  const shortTimeBadge = `${dayMeta.short} ${card.hourSlot}`;
-  const scheduleFullLabel = `${dayMeta.label} (${dayMeta.date}) · ${card.hourSlot}`;
+  const orderNum = getPlanningOrderNumber(card.hourSlot);
+  const shortTimeBadge = `${dayMeta.short} · #${orderNum}`;
+  const scheduleFullLabel = `${dayMeta.label} (${dayMeta.date}) · Ordinea #${orderNum}`;
 
   if (card.completed) {
     return {
@@ -830,8 +831,12 @@ export function getPlanningCardLifecycle(
     };
   }
 
-  const slotInPast = isPlanningSlotInPast(isoDate, card.hourSlot, zdtNow);
-  if (!slotInPast) {
+  const todayIso = zdtNow.toPlainDate().toString();
+  const dateCmp = Temporal.PlainDate.compare(
+    Temporal.PlainDate.from(isoDate),
+    Temporal.PlainDate.from(todayIso)
+  );
+  if (dateCmp > 0) {
     return {
       lifecycle: 'planned',
       badgeLabel: 'Planificată',
@@ -843,7 +848,6 @@ export function getPlanningCardLifecycle(
     };
   }
 
-  // Slot start is in the past and card is not marked completed
   const absorbed = isCardAbsorbedByLiveCorridor(card, trailers);
   if (absorbed) {
     const baseDef = CORRIDOR_ROUTES[card.trailerId];
@@ -858,6 +862,19 @@ export function getPlanningCardLifecycle(
       isoDate,
       isAbsorbedInLiveCorridor: true,
       progressRatio: ratio,
+    };
+  }
+
+  // Any uncompleted order scheduled on TODAY (`AZI`) is active regardless of daily position `#1..#11`
+  if (dateCmp === 0) {
+    return {
+      lifecycle: 'in_transit',
+      badgeLabel: 'Activă',
+      shortTimeBadge,
+      scheduleFullLabel,
+      isoDate,
+      isAbsorbedInLiveCorridor: false,
+      progressRatio: 0.22,
     };
   }
 
@@ -1015,22 +1032,8 @@ function buildDynamicMapTripFromCard(
               ? 'Trecut ✓'
               : 'În curs';
 
-    const weatherType: AppleWeatherType =
-      stop.coords[0] >= 55
-        ? 'wind'
-        : stop.coords[0] >= 50
-          ? 'rain'
-          : stop.coords[0] >= 47.5
-            ? 'partly-cloudy'
-            : 'sun';
-    const tempC =
-      stop.coords[0] >= 56
-        ? 2
-        : stop.coords[0] >= 51
-          ? 7
-          : stop.coords[0] >= 47.8
-            ? 9
-            : 11;
+    const weatherType: AppleWeatherType = 'partly-cloudy';
+    const tempC = 10;
 
     return {
       city: stop.display,
@@ -1045,7 +1048,7 @@ function buildDynamicMapTripFromCard(
           : `${cumKm.toLocaleString('ro-RO')} km (+${deltaKm} km)`,
       weatherType,
       tempC,
-      weatherDesc: weatherType === 'sun' ? 'Senin' : 'Traseu HGV',
+      weatherDesc: 'Traseu HGV',
       freeLdmAfter:
         idx === selectedStops.length - 1 ? 13.6 : freeAfterStart,
     };

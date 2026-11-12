@@ -74,12 +74,12 @@ export const CmrAndInvoiceModal: React.FC<CmrAndInvoiceModalProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="tahoe-glass-elevated rounded-[28px] w-[min(96vw,896px)] h-[min(90dvh,760px)] p-5 sm:p-6 flex flex-col gap-4 shadow-2xl border border-white/20 overflow-clip print:w-full print:h-auto print:overflow-visible"
       >
-        {/* Top Action Bar (pinned — X always in top-right corner) */}
-        <div className="shrink-0 flex flex-nowrap items-center justify-between gap-3 border-b border-white/15 pb-3.5">
+        {/* Top Action Bar (pinned — all tabs & actions fit on 1 row on mobile & PC) */}
+        <div className="shrink-0 flex flex-nowrap items-center justify-between gap-1.5 sm:gap-3 border-b border-white/15 pb-3.5">
           <div
             role="tablist"
             aria-label="Tip document transport"
-            className="min-w-0 flex-1 flex items-center gap-2 flex-nowrap overflow-x-auto no-scrollbar"
+            className="min-w-0 flex-1 grid grid-cols-2 gap-1.5 sm:flex sm:items-center sm:gap-2 sm:flex-nowrap sm:overflow-x-auto no-scrollbar"
             onKeyDown={(e) => {
               if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
               e.preventDefault();
@@ -102,10 +102,11 @@ export const CmrAndInvoiceModal: React.FC<CmrAndInvoiceModalProps> = ({
                 setActiveDocTab('CMR');
                 e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
               }}
-              className="px-4 py-2 rounded-full text-xs font-extrabold whitespace-nowrap shrink-0 flex items-center gap-1.5 transition cursor-pointer tahoe-btn-secondary text-white/85"
+              className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-2 sm:px-4 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-extrabold whitespace-nowrap sm:shrink-0 flex items-center justify-center gap-1 sm:gap-1.5 transition cursor-pointer tahoe-btn-secondary text-white/85"
             >
-              <FileCheck2 className="w-4 h-4" />
-              <span>Scrisoare CMR Internațional</span>
+              <FileCheck2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden truncate">CMR</span>
+              <span className="hidden sm:inline">Scrisoare CMR Internațional</span>
             </button>
             <button
               id="cmr-modal-tab-invoice"
@@ -118,21 +119,23 @@ export const CmrAndInvoiceModal: React.FC<CmrAndInvoiceModalProps> = ({
                 setActiveDocTab('INVOICE');
                 e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
               }}
-              className="px-4 py-2 rounded-full text-xs font-extrabold whitespace-nowrap shrink-0 flex items-center gap-1.5 transition cursor-pointer tahoe-btn-secondary text-white/85"
+              className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-2 sm:px-4 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-extrabold whitespace-nowrap sm:shrink-0 flex items-center justify-center gap-1 sm:gap-1.5 transition cursor-pointer tahoe-btn-secondary text-white/85"
             >
-              <Receipt className="w-4 h-4" />
-              <span>Factură Proformă / Fiscală (EUR)</span>
+              <Receipt className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden truncate">Factură</span>
+              <span className="hidden sm:inline">Factură Proformă / Fiscală (EUR)</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={() => window.print()}
-              className="px-4 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0070e0] text-white text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap shadow-md cursor-pointer shrink-0"
+              className="min-h-[38px] sm:min-h-0 px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-full bg-[#0A84FF] hover:bg-[#0070e0] text-white text-[11px] sm:text-xs font-extrabold flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shadow-md cursor-pointer shrink-0"
             >
-              <Printer className="w-4 h-4 shrink-0" />
-              <span>Printează / Export PDF</span>
+              <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden">PDF</span>
+              <span className="hidden sm:inline">Printează / Export PDF</span>
             </button>
             <button
               type="button"

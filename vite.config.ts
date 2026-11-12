@@ -551,8 +551,10 @@ export default defineConfig({
   },
   plugins: [react(), tailwindcss(), acteFlotaSyncPlugin()],
   server: {
+    host: '0.0.0.0',
     port: 3645,
     strictPort: true,
+    allowedHosts: true,
     watch: {
       ignored: ['**/public/acte-flota/**', '**/.agents/**', '**/.data/**'],
     },

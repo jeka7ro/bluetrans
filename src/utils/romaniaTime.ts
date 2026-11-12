@@ -17,6 +17,21 @@ export const PLANNING_HOUR_SLOTS = [
   '18:00',
 ] as const;
 
+/**
+ * Returns the 1-based daily sequence number (`1..11`) for a planning slot key (`08:00..18:00`).
+ * Planning rows represent the daily order/sequence of shipments rather than strict clock hours.
+ */
+export function getPlanningOrderNumber(hourSlot: string): number {
+  const idx = PLANNING_HOUR_SLOTS.indexOf(
+    hourSlot as (typeof PLANNING_HOUR_SLOTS)[number]
+  );
+  return idx >= 0 ? idx + 1 : 1;
+}
+
+export function formatPlanningOrderPosition(hourSlot: string): string {
+  return `Ordinea #${getPlanningOrderNumber(hourSlot)}`;
+}
+
 const RO_WEEKDAY_SHORT = ['LUN', 'MAR', 'MIE', 'JOI', 'VIN', 'SÂM', 'DUM'] as const;
 const RO_WEEKDAY_FULL = [
   'Luni',
@@ -169,30 +184,22 @@ export function formatRomaniaClockSnapshot(
 }
 
 /**
- * Checks whether a calendar slot `(isoDate, hourSlot)` in `Europe/Bucharest`
- * is strictly in the past compared to `zdtNow`.
+ * Checks whether a calendar day/slot in `Europe/Bucharest` belongs to a past calendar date.
+ * Planning slots represent the daily order/sequence of shipments (`Ordinea #1..#11`),
+ * NOT clock hours, so Today (`AZI`) and all future dates keep every order slot open all day.
  */
 export function isPlanningSlotInPast(
   isoDate: string,
-  hourSlot: string,
+  _hourSlot: string,
   zdtNow: Temporal.ZonedDateTime = getRomaniaZonedNow()
 ): boolean {
-  const cleanHour = /^\d{2}:\d{2}$/.test(hourSlot) ? hourSlot : '08:00';
-  const slotZdt = Temporal.ZonedDateTime.from(
-    `${isoDate}T${cleanHour}:00[${ROMANIA_TIME_ZONE}]`,
-    { disambiguation: 'compatible' }
-  );
-  // Compare at minute precision so e.g. at 14:00:15 the 14:00 slot is still usable during 14:00,
-  // or strictly before current minute? Wait: if it is 13:10, 13:00 is past (< 13:10) and 14:00 is future!
-  // At 14:00 sharp (14:00:xx), truncating zdtNow to minute allows 14:00 during the 14:00 minute,
-  // and at 14:01, 14:00 becomes past!
-  const nowMinute = zdtNow.with({
-    second: 0,
-    millisecond: 0,
-    microsecond: 0,
-    nanosecond: 0,
-  });
-  return Temporal.ZonedDateTime.compare(slotZdt, nowMinute) < 0;
+  try {
+    const slotDate = Temporal.PlainDate.from(isoDate);
+    const roToday = zdtNow.toPlainDate();
+    return Temporal.PlainDate.compare(slotDate, roToday) < 0;
+  } catch {
+    return false;
+  }
 }
 
 /**

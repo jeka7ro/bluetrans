@@ -117,21 +117,20 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      {/* Header — macOS Tahoe Glass */}
-      <div className="tahoe-glass rounded-[26px] p-4 sm:p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div>
-          <h1 className="text-lg sm:text-xl font-bold text-white tracking-tight mt-1.5">
-            Oferte clienți
-          </h1>
-        </div>
+    <div className="space-y-3 sm:space-y-6">
+      {/* Header — single compact row on mobile, unchanged on desktop */}
+      <div className="tahoe-glass rounded-[22px] sm:rounded-[26px] p-3 sm:p-6 flex flex-row items-center justify-between gap-2 sm:gap-4">
+        <h1 className="text-base sm:text-xl font-bold text-white tracking-tight whitespace-nowrap">
+          Oferte clienți
+        </h1>
 
         <button
           onClick={() => setShowClientFormModal(true)}
-          className="tahoe-btn-primary px-4 py-2.5 rounded-full text-xs flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+          className="tahoe-btn-primary px-3 sm:px-4 py-2 sm:py-2.5 rounded-full text-[11px] sm:text-xs flex items-center justify-center gap-1.5 sm:gap-2 shrink-0 cursor-pointer"
         >
-          <Sparkles className="w-4 h-4" />
-          Simulează Ofertă Nouă de la Client
+          <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+          <span className="sm:hidden">+ Ofertă client</span>
+          <span className="hidden sm:inline">Simulează Ofertă Nouă de la Client</span>
         </button>
       </div>
 

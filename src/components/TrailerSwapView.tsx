@@ -250,28 +250,28 @@ export const TrailerSwapView: React.FC = () => {
           ?.waitMin ?? activeScenario.meetingPoint.waitWindowMinutes;
 
   return (
-    <div className="space-y-3.5">
-      {/* Compact Header */}
-      <div className="tahoe-glass rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+    <div className="space-y-2.5 sm:space-y-3.5">
+      {/* Compact Header — single row on mobile without helper prose, unchanged on desktop */}
+      <div className="tahoe-glass rounded-2xl px-3.5 sm:px-4 py-2.5 sm:py-3 flex flex-nowrap sm:flex-wrap items-center justify-between gap-2 sm:gap-3">
+        <div className="min-w-0">
+          <h1 className="text-base sm:text-xl font-bold text-white tracking-tight truncate">
             Schimburi de remorci
           </h1>
-          <p className="text-xs text-white/60">
+          <p className="hidden sm:block text-xs text-white/60">
             Alege o propunere, verifică confirmarea ambilor șoferi și aprobă schimbul.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 text-xs tabular-nums">
-          <div className="tahoe-card-inner rounded-xl px-3 py-1.5 flex items-center gap-2">
-            <span className="text-white/55">Timp câștigat:</span>
-            <strong className="text-[#30D158] text-sm font-extrabold">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 text-[11px] sm:text-xs tabular-nums shrink-0">
+          <div className="tahoe-card-inner rounded-xl px-2 sm:px-3 py-1 sm:py-1.5 flex items-center gap-1 sm:gap-2">
+            <span className="hidden sm:inline text-white/55">Timp câștigat:</span>
+            <strong className="text-[#30D158] text-xs sm:text-sm font-extrabold">
               +{totalSavedHours.toFixed(1)} h
             </strong>
           </div>
-          <div className="tahoe-card-inner rounded-xl px-3 py-1.5 flex items-center gap-2">
-            <span className="text-white/55">Câștig estimat:</span>
-            <strong className="text-[#FF9F0A] text-sm font-extrabold">
+          <div className="tahoe-card-inner rounded-xl px-2 sm:px-3 py-1 sm:py-1.5 flex items-center gap-1 sm:gap-2">
+            <span className="hidden sm:inline text-white/55">Câștig estimat:</span>
+            <strong className="text-[#FF9F0A] text-xs sm:text-sm font-extrabold">
               +{totalNetBenefit.toLocaleString('ro-RO')} €
             </strong>
           </div>
@@ -291,8 +291,8 @@ export const TrailerSwapView: React.FC = () => {
         </div>
       )}
 
-      {/* 4 Clean Proposal Selector Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+      {/* 4 Clean Proposal Selector Cards — 2-per-row on mobile, 4-col on desktop */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-2.5">
         {scenarios.map((s) => {
           const isSelected = s.id === activeScenario.id;
           const pA = extractPlate(s.tractorA.tractorId) || s.tractorA.tractorId;

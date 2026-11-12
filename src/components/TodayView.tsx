@@ -49,7 +49,7 @@ const SectionTitle: React.FC<{
         {count}
       </span>
     </div>
-    {demo && <DemoBadge label="date de test" />}
+    {demo && <DemoBadge className="hidden sm:inline-flex" label="date de test" />}
   </div>
 );
 
@@ -131,15 +131,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
         />
       )}
 
-      {/* Antet + 3 contoare clickabile direct spre subiect */}
-      <div className="tahoe-glass rounded-[28px] p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
+      {/* Antet + 3 contoare clickabile direct spre subiect (pe 1 rând pe mobil, neschimbat pe PC) */}
+      <div className="tahoe-glass rounded-[24px] sm:rounded-[28px] p-3 sm:p-5 flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-2.5 sm:gap-4">
+        <div className="flex sm:block items-baseline justify-between gap-2">
+          <h1 className="text-lg sm:text-2xl font-extrabold text-white tracking-tight">
             Operațional
           </h1>
-          <div className="text-xs text-white/55 mt-0.5 capitalize">{today}</div>
+          <div className="text-[11px] sm:text-xs text-white/55 sm:mt-0.5 capitalize">{today}</div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-3 sm:flex sm:flex-wrap gap-1.5 sm:gap-2 w-full sm:w-auto">
           {[
             {
               n: unassignedOrders.length,
@@ -174,7 +174,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               onClick={c.onClick}
               title={c.hint}
               aria-label={`${c.n} ${c.t} — ${c.hint}`}
-              className="today-kpi-shortcut tahoe-card-inner rounded-2xl px-4 py-2 text-center min-w-[96px] cursor-pointer select-none group"
+              className="today-kpi-shortcut tahoe-card-inner rounded-2xl px-2 sm:px-4 py-1.5 sm:py-2 text-center sm:min-w-[96px] cursor-pointer select-none group"
               style={
                 {
                   borderTop: `3px solid ${c.c}`,
@@ -183,16 +183,16 @@ export const TodayView: React.FC<TodayViewProps> = ({
               }
             >
               <div
-                className="text-2xl font-extrabold leading-none tabular-nums"
+                className="text-xl sm:text-2xl font-extrabold leading-none tabular-nums"
                 style={{ color: c.c }}
               >
                 {c.n}
               </div>
-              <div className="text-[11px] font-semibold text-white/65 mt-1 inline-flex items-center justify-center gap-0.5">
+              <div className="text-[10.5px] sm:text-[11px] font-semibold text-white/65 mt-1 inline-flex items-center justify-center gap-0.5 whitespace-nowrap">
                 <span>{c.t}</span>
                 <ChevronRight
                   aria-hidden="true"
-                  className="w-3 h-3 opacity-55 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
+                  className="w-3 h-3 opacity-55 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0"
                   style={{ color: c.c }}
                 />
               </div>

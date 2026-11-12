@@ -380,16 +380,20 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
     <div className="space-y-4">
       {/* Top Bar: Tabs + Primary Invite Button */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div role="tablist" aria-label="Administrare acces" className="flex items-center gap-2">
+        <div
+          role="tablist"
+          aria-label="Administrare acces"
+          className="w-full grid grid-cols-2 gap-1.5 sm:w-auto sm:flex sm:items-center sm:gap-2"
+        >
           <button
             type="button"
             role="tab"
             aria-selected={section === 'STAFF'}
             onClick={() => setSection('STAFF')}
-            className="px-4 py-2 rounded-full tahoe-btn-secondary text-xs font-bold flex items-center gap-2 cursor-pointer"
+            className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-2.5 sm:px-4 py-2 rounded-full tahoe-btn-secondary text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap cursor-pointer"
           >
-            <Users className="w-3.5 h-3.5" />
-            <span>Utilizatori ({staffUsers.length})</span>
+            <Users className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Utilizatori ({staffUsers.length})</span>
           </button>
 
           <button
@@ -397,10 +401,11 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
             role="tab"
             aria-selected={section === 'DRIVER_LINKS'}
             onClick={() => setSection('DRIVER_LINKS')}
-            className="px-4 py-2 rounded-full tahoe-btn-secondary text-xs font-bold flex items-center gap-2 cursor-pointer"
+            className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-2.5 sm:px-4 py-2 rounded-full tahoe-btn-secondary text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap cursor-pointer"
           >
-            <Truck className="w-3.5 h-3.5" />
-            <span>Linkuri Portal Șoferi ({trailers.length})</span>
+            <Truck className="w-3.5 h-3.5 shrink-0" />
+            <span className="sm:hidden truncate">Portal Șoferi ({trailers.length})</span>
+            <span className="hidden sm:inline">Linkuri Portal Șoferi ({trailers.length})</span>
           </button>
         </div>
 
@@ -408,7 +413,7 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
           <button
             type="button"
             onClick={openInviteModal}
-            className="px-4 py-2.5 rounded-full tahoe-btn-primary text-xs font-extrabold text-white flex items-center gap-2 cursor-pointer"
+            className="hidden sm:flex px-4 py-2.5 rounded-full tahoe-btn-primary text-xs font-extrabold text-white items-center gap-2 cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
             <span>+ Invită utilizator</span>
@@ -434,48 +439,59 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
       )}
 
       {section === 'STAFF' ? (
-        <div className="tahoe-glass rounded-[24px] p-4 sm:p-5 space-y-4">
-          {/* Search + Role Filter Pills */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <search className="w-full sm:w-72">
-              <div className="relative">
-                <Search className="w-4 h-4 text-white/50 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
-                <input
-                  type="search"
-                  name="userSearch"
-                  autoCorrect="off"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  aria-label="Caută utilizator"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Caută nume, email, utilizator..."
-                  className="w-full tahoe-card-inner rounded-full pl-9 pr-4 py-2 text-xs font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
-                />
-              </div>
-            </search>
+        <div className="tahoe-glass rounded-[24px] p-3.5 sm:p-5 space-y-3 sm:space-y-4">
+          {/* Search + Role Filter Pills (1 single row on mobile, unchanged on desktop) */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <search className="flex-1 sm:w-72">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-white/50 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
+                  <input
+                    type="search"
+                    name="userSearch"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    aria-label="Caută utilizator"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Caută nume, email, utilizator..."
+                    className="w-full tahoe-card-inner rounded-full pl-9 pr-4 py-2 text-xs font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
+                  />
+                </div>
+              </search>
+              <button
+                type="button"
+                onClick={openInviteModal}
+                className="sm:hidden px-3 py-2 rounded-full tahoe-btn-primary text-[11px] font-extrabold text-white flex items-center gap-1 cursor-pointer shrink-0"
+              >
+                <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                <span>+ Invită</span>
+              </button>
+            </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="grid grid-cols-5 gap-1 w-full sm:w-auto sm:flex sm:flex-wrap sm:items-center sm:gap-1.5">
               {(
                 [
-                  { id: 'ALL', label: 'Toți' },
-                  { id: 'ADMIN', label: 'Administrator' },
-                  { id: 'DISPECER', label: 'Dispecer' },
-                  { id: 'FINANCIAR', label: 'Financiar' },
-                  { id: 'INVITED', label: 'Invitați' },
+                  { id: 'ALL', label: 'Toți', mobileLabel: 'Toți' },
+                  { id: 'ADMIN', label: 'Administrator', mobileLabel: 'Admin' },
+                  { id: 'DISPECER', label: 'Dispecer', mobileLabel: 'Disp.' },
+                  { id: 'FINANCIAR', label: 'Financiar', mobileLabel: 'Fin.' },
+                  { id: 'INVITED', label: 'Invitați', mobileLabel: 'Invitați' },
                 ] as const
               ).map((f) => (
                 <button
                   key={f.id}
                   type="button"
                   onClick={() => setRoleFilter(f.id)}
-                  className={`tps-nav-tab-btn px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer ${
+                  className={`tps-nav-tab-btn min-w-0 px-1.5 sm:px-3 py-1.5 rounded-full text-[10.5px] sm:text-xs font-bold truncate cursor-pointer ${
                     roleFilter === f.id
                       ? 'tahoe-btn-primary text-white'
                       : 'tahoe-btn-secondary text-white/75 hover:text-white'
                   }`}
                 >
-                  {f.label}
+                  <span className="sm:hidden">{f.mobileLabel}</span>
+                  <span className="hidden sm:inline">{f.label}</span>
                 </button>
               ))}
             </div>

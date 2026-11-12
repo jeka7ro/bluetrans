@@ -1811,50 +1811,50 @@ export const getFleetPhoto = (decoded: DecodedVinInfo): string | null => {
     engine.includes('13 147');
   const color = decoded.oemColor.code;
   if (decoded.bodyStyle === 'trailer-schmitz') {
-    if (color === '1346-BLUE' || color === '5010-NAVY') return '/fleet/schmitz-reefer-blue.jpg';
-    if (color === '1103-WHITE') return '/fleet/schmitz-reefer-white.jpg';
+    if (color === '1346-BLUE' || color === '5010-NAVY') return '/fleet/schmitz-reefer-blue.webp';
+    if (color === '1103-WHITE') return '/fleet/schmitz-reefer-white.webp';
   }
   if (decoded.bodyStyle === 'trailer-krone' && color === '1103-WHITE') {
-    return '/fleet/krone-reefer-white.jpg';
+    return '/fleet/krone-reefer-white.webp';
   }
   if (decoded.bodyStyle === 'tractor-scania') {
     if (color === '1103-WHITE') {
-      if (isScaniaStreamline) return '/fleet/scania-r-streamline-white.jpg';
-      if (/scania s \d/.test(name)) return '/fleet/scania-s-nextgen-white.jpg';
-      return '/fleet/scania-r-nextgen-white.jpg';
+      if (isScaniaStreamline) return '/fleet/scania-r-streamline-white.webp';
+      if (/scania s \d/.test(name)) return '/fleet/scania-s-nextgen-white.webp';
+      return '/fleet/scania-r-nextgen-white.webp';
     }
     if (color === '9744-SILVER') {
-      return '/fleet/scania-r-nextgen-grey.jpg';
+      return '/fleet/scania-r-nextgen-grey.webp';
     }
     if (color === '1346-BLUE' || color === '5010-NAVY') {
-      if (isScaniaStreamline) return '/fleet/scania-r-streamline-blue.jpg';
-      if (/scania s \d/.test(name)) return '/fleet/scania-s-nextgen-blue.jpg';
-      return '/fleet/scania-r-nextgen-blue.jpg';
+      if (isScaniaStreamline) return '/fleet/scania-r-streamline-blue.webp';
+      if (/scania s \d/.test(name)) return '/fleet/scania-s-nextgen-blue.webp';
+      return '/fleet/scania-r-nextgen-blue.webp';
     }
   }
   if (decoded.bodyStyle === 'tractor-volvo') {
-    if (color === '1103-WHITE') return '/fleet/volvo-fh-white.jpg';
-    if (color === '9744-SILVER') return '/fleet/volvo-fh-2013-silver.jpg';
-    if (color === '5010-NAVY') return '/fleet/volvo-fh-2018-navy.jpg';
-    if (color === '1346-BLUE') return '/fleet/volvo-fh-2025-blue.jpg';
+    if (color === '1103-WHITE') return '/fleet/volvo-fh-white.webp';
+    if (color === '9744-SILVER') return '/fleet/volvo-fh-2013-silver.webp';
+    if (color === '5010-NAVY') return '/fleet/volvo-fh-2018-navy.webp';
+    if (color === '1346-BLUE') return '/fleet/volvo-fh-2025-blue.webp';
   }
   if (decoded.bodyStyle === 'van-sprinter' && color === '9005-BLACK') {
-    return '/fleet/sprinter-frigo-black.jpg';
+    return '/fleet/sprinter-frigo-black.webp';
   }
   if (decoded.bodyStyle === 'car-sedan') {
     if (name.includes('logan') && (color === '1346-BLUE' || color === '5010-NAVY')) {
-      return '/fleet/dacia-logan-2024-blue.jpg';
+      return '/fleet/dacia-logan-2024-blue.webp';
     }
     if (name.includes('mercedes') && color === '9005-BLACK') {
-      return '/fleet/mercedes-c250-w204-black.jpg';
+      return '/fleet/mercedes-c250-w204-black.webp';
     }
   }
   return null;
 };
 
 /**
- * Returnează întotdeauna o fotografie reală de studio din `/fleet/*.jpg` pentru miniaturile
- * cardurilor din „Mașinile mele”, eliminând complet orice ilustrație caricaturală 2D SVG.
+ * Returnează întotdeauna o fotografie reală de studio decupată transparent (`/fleet/*.webp`)
+ * pentru miniaturile cardurilor din „Mașinile mele”, integrată nativ în Dark Mode și Light Mode.
  */
 export const getFleetCardPhoto = (decoded: DecodedVinInfo): string => {
   const exact = getFleetPhoto(decoded);
@@ -1869,44 +1869,44 @@ export const getFleetCardPhoto = (decoded: DecodedVinInfo): string => {
   const color = decoded.oemColor.code;
 
   if (decoded.bodyStyle === 'trailer-krone') {
-    return '/fleet/krone-reefer-white.jpg';
+    return '/fleet/krone-reefer-white.webp';
   }
   if (decoded.bodyStyle === 'trailer-schmitz') {
     return color === '1346-BLUE' || color === '5010-NAVY'
-      ? '/fleet/schmitz-reefer-blue.jpg'
-      : '/fleet/schmitz-reefer-white.jpg';
+      ? '/fleet/schmitz-reefer-blue.webp'
+      : '/fleet/schmitz-reefer-white.webp';
   }
   if (decoded.bodyStyle === 'van-sprinter' || decoded.bodyStyle === 'truck-man-tgl') {
-    return '/fleet/sprinter-frigo-black.jpg';
+    return '/fleet/sprinter-frigo-black.webp';
   }
   if (decoded.bodyStyle === 'car-sedan') {
     return name.includes('logan')
-      ? '/fleet/dacia-logan-2024-blue.jpg'
-      : '/fleet/mercedes-c250-w204-black.jpg';
+      ? '/fleet/dacia-logan-2024-blue.webp'
+      : '/fleet/mercedes-c250-w204-black.webp';
   }
   if (decoded.bodyStyle === 'tractor-volvo') {
-    if (color === '1103-WHITE') return '/fleet/volvo-fh-white.jpg';
-    if (color === '9744-SILVER') return '/fleet/volvo-fh-2013-silver.jpg';
-    if (color === '5010-NAVY' || color === '9005-BLACK') return '/fleet/volvo-fh-2018-navy.jpg';
-    return '/fleet/volvo-fh-2025-blue.jpg';
+    if (color === '1103-WHITE') return '/fleet/volvo-fh-white.webp';
+    if (color === '9744-SILVER') return '/fleet/volvo-fh-2013-silver.webp';
+    if (color === '5010-NAVY' || color === '9005-BLACK') return '/fleet/volvo-fh-2018-navy.webp';
+    return '/fleet/volvo-fh-2025-blue.webp';
   }
   if (isScaniaStreamline) {
     return color === '1103-WHITE'
-      ? '/fleet/scania-r-streamline-white.jpg'
-      : '/fleet/scania-r-streamline-blue.jpg';
+      ? '/fleet/scania-r-streamline-white.webp'
+      : '/fleet/scania-r-streamline-blue.webp';
   }
   if (/scania s \d/.test(name)) {
     return color === '1103-WHITE'
-      ? '/fleet/scania-s-nextgen-white.jpg'
-      : '/fleet/scania-s-nextgen-blue.jpg';
+      ? '/fleet/scania-s-nextgen-white.webp'
+      : '/fleet/scania-s-nextgen-blue.webp';
   }
   if (color === '9744-SILVER' || color === '9005-BLACK') {
-    return '/fleet/scania-r-nextgen-grey.jpg';
+    return '/fleet/scania-r-nextgen-grey.webp';
   }
   if (color === '1103-WHITE') {
-    return '/fleet/scania-r-nextgen-white.jpg';
+    return '/fleet/scania-r-nextgen-white.webp';
   }
-  return '/fleet/scania-r-nextgen-blue.jpg';
+  return '/fleet/scania-r-nextgen-blue.webp';
 };
 
 /**
@@ -1948,8 +1948,8 @@ const TrailerPhotoWithLivery: React.FC<{
     <div
       className={
         mode === 'dossier'
-          ? 'relative inline-flex items-center justify-center max-h-[250px] overflow-hidden rounded-2xl bg-white'
-          : 'relative w-full h-full flex items-center justify-center overflow-hidden'
+          ? 'fleet-studio-cutout relative isolate inline-flex items-center justify-center max-h-[250px] overflow-hidden rounded-2xl'
+          : 'fleet-studio-cutout relative isolate w-full h-full flex items-center justify-center overflow-hidden'
       }
     >
       <img
@@ -2222,12 +2222,12 @@ export const VehicleStudioRender: React.FC<{
                   mode="dossier"
                 />
               ) : (
-                <div className="w-full h-[250px] rounded-2xl bg-white flex items-center justify-center overflow-hidden">
+                <div className="w-full h-[250px] rounded-2xl flex items-center justify-center overflow-hidden">
                   <img
                     src={fleetPhoto}
                     alt={modelName}
                     draggable={false}
-                    className="max-h-[250px] w-auto object-contain"
+                    className="fleet-studio-cutout max-h-[250px] w-auto object-contain select-none"
                   />
                 </div>
               )
@@ -3427,7 +3427,7 @@ export const VehicleDossierModal: React.FC<{
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="tahoe-glass-elevated rounded-[28px] w-[min(96vw,1024px)] h-[min(91dvh,845px)] p-5 sm:p-6 flex flex-col gap-3.5 shadow-2xl border border-white/20 overflow-clip"
+        className="tahoe-glass-elevated rounded-[28px] w-[min(96vw,1024px)] h-[min(91dvh,845px)] p-3 sm:p-6 flex flex-col gap-3.5 shadow-2xl border border-white/20 overflow-clip"
       >
         {/* Top Modal Header (pinned — X always in top-right corner) */}
         <div className="shrink-0 flex flex-nowrap items-start justify-between gap-3 border-b border-white/15 pb-3.5">
@@ -3463,11 +3463,13 @@ export const VehicleDossierModal: React.FC<{
           </button>
         </div>
 
-        {/* 4-Tab Switcher inside the Vehicle Dossier — single-row capsule tablist (pinned) */}
+        {/* 4-Tab Switcher inside the Vehicle Dossier — single-row capsule tablist (all tabs fit on 1 row on mobile & PC) */}
         <div
           role="tablist"
           aria-label="Dosar tehnic vehicul și semiremorcă"
-          className="shrink-0 flex flex-nowrap items-center gap-2 overflow-x-auto no-scrollbar border-b border-white/10 pb-3"
+          className={`shrink-0 grid ${
+            isExpressSingle ? 'grid-cols-3' : 'grid-cols-4'
+          } gap-1 sm:flex sm:flex-nowrap sm:items-center sm:gap-2 sm:overflow-x-auto no-scrollbar border-b border-white/10 pb-3`}
           onKeyDown={(e) => {
             const visibleTabs: Array<'tractor' | 'trailer' | 'coupled' | 'edit'> = isExpressSingle
               ? ['tractor', 'coupled', 'edit']
@@ -3497,10 +3499,13 @@ export const VehicleDossierModal: React.FC<{
               setActiveTab('tractor');
               e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             }}
-            className="px-3.5 py-2 rounded-full tahoe-btn-secondary text-xs font-extrabold text-white/80 hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer"
+            className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-1 py-1.5 sm:px-3.5 sm:py-2 rounded-full tahoe-btn-secondary text-[10.5px] sm:text-xs font-bold sm:font-extrabold tracking-tight sm:tracking-normal text-white/80 hover:text-white flex items-center justify-center gap-0.5 sm:gap-1.5 whitespace-nowrap sm:shrink-0 transition cursor-pointer"
           >
-            <Truck className="w-3.5 h-3.5 shrink-0" />
-            <span>
+            <Truck className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+            <span className="sm:hidden truncate">
+              {isCarSingle ? 'Auto' : isExpressSingle ? 'Utilitară' : 'Tractor'}
+            </span>
+            <span className="hidden sm:inline">
               {isCarSingle
                 ? `Autoturism (${draftTech.tractorPlate})`
                 : isExpressSingle
@@ -3520,10 +3525,11 @@ export const VehicleDossierModal: React.FC<{
                 setActiveTab('trailer');
                 e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
               }}
-              className="px-3.5 py-2 rounded-full tahoe-btn-secondary text-xs font-extrabold text-white/80 hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer"
+              className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-1 py-1.5 sm:px-3.5 sm:py-2 rounded-full tahoe-btn-secondary text-[10.5px] sm:text-xs font-bold sm:font-extrabold tracking-tight sm:tracking-normal text-white/80 hover:text-white flex items-center justify-center gap-0.5 sm:gap-1.5 whitespace-nowrap sm:shrink-0 transition cursor-pointer"
             >
-              <ThermometerSnowflake className="w-3.5 h-3.5 shrink-0" />
-              <span>Semiremorcă ({activeTrailerPlate})</span>
+              <ThermometerSnowflake className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span className="sm:hidden truncate">Remorcă</span>
+              <span className="hidden sm:inline">Semiremorcă ({activeTrailerPlate})</span>
             </button>
           )}
 
@@ -3537,10 +3543,13 @@ export const VehicleDossierModal: React.FC<{
               setActiveTab('coupled');
               e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             }}
-            className="px-3.5 py-2 rounded-full tahoe-btn-secondary text-xs font-extrabold text-white/80 hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer"
+            className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-1 py-1.5 sm:px-3.5 sm:py-2 rounded-full tahoe-btn-secondary text-[10.5px] sm:text-xs font-bold sm:font-extrabold tracking-tight sm:tracking-normal text-white/80 hover:text-white flex items-center justify-center gap-0.5 sm:gap-1.5 whitespace-nowrap sm:shrink-0 transition cursor-pointer"
           >
-            <Layers className="w-3.5 h-3.5 shrink-0" />
-            <span>
+            <Layers className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+            <span className="sm:hidden truncate">
+              {isExpressSingle ? 'Acte' : 'Ansamblu'}
+            </span>
+            <span className="hidden sm:inline">
               {isExpressSingle
                 ? 'Telemetrie & acte'
                 : 'Ansamblu, anvelope & acte'}
@@ -3557,10 +3566,11 @@ export const VehicleDossierModal: React.FC<{
               setActiveTab('edit');
               e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             }}
-            className="px-3.5 py-2 rounded-full tahoe-btn-secondary text-xs font-extrabold text-white/80 hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer"
+            className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-1 py-1.5 sm:px-3.5 sm:py-2 rounded-full tahoe-btn-secondary text-[10.5px] sm:text-xs font-bold sm:font-extrabold tracking-tight sm:tracking-normal text-white/80 hover:text-white flex items-center justify-center gap-0.5 sm:gap-1.5 whitespace-nowrap sm:shrink-0 transition cursor-pointer"
           >
-            <Edit3 className="w-3.5 h-3.5 shrink-0" />
-            <span>Editează VIN & date</span>
+            <Edit3 className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+            <span className="sm:hidden truncate">Editare</span>
+            <span className="hidden sm:inline">Editează VIN & date</span>
           </button>
         </div>
 
@@ -4640,33 +4650,35 @@ export const VehicleDossierModal: React.FC<{
                   <div
                     role="group"
                     aria-label="Selectează unitatea pentru editarea polițelor"
-                    className="inline-flex flex-nowrap items-center gap-1 p-1 rounded-full tahoe-card-inner border border-white/15"
+                    className="w-full grid grid-cols-2 sm:w-auto sm:inline-flex items-center gap-1 p-1 rounded-full tahoe-card-inner border border-white/15"
                   >
                     <button
                       type="button"
                       onClick={() => setDocUnitTarget('tractor')}
                       aria-pressed={docUnitTarget === 'tractor'}
-                      className={`px-3 py-1 rounded-full text-[11px] font-extrabold whitespace-nowrap cursor-pointer transition ${
+                      className={`min-w-0 px-2 sm:px-3 py-1 rounded-full text-[11px] font-extrabold whitespace-nowrap flex items-center justify-center cursor-pointer transition ${
                         docUnitTarget === 'tractor'
                           ? 'bg-[#0A84FF] text-white shadow-xs'
                           : 'text-white/75 hover:text-white'
                       }`}
                       style={docUnitTarget === 'tractor' ? { color: '#ffffff' } : undefined}
                     >
-                      Cap tractor ({draftTech.tractorPlate})
+                      <span className="sm:hidden truncate">Tractor ({draftTech.tractorPlate})</span>
+                      <span className="hidden sm:inline">Cap tractor ({draftTech.tractorPlate})</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setDocUnitTarget('trailer')}
                       aria-pressed={docUnitTarget === 'trailer'}
-                      className={`px-3 py-1 rounded-full text-[11px] font-extrabold whitespace-nowrap cursor-pointer transition ${
+                      className={`min-w-0 px-2 sm:px-3 py-1 rounded-full text-[11px] font-extrabold whitespace-nowrap flex items-center justify-center cursor-pointer transition ${
                         docUnitTarget === 'trailer'
                           ? 'bg-[#0A84FF] text-white shadow-xs'
                           : 'text-white/75 hover:text-white'
                       }`}
                       style={docUnitTarget === 'trailer' ? { color: '#ffffff' } : undefined}
                     >
-                      Semiremorcă ({activeTrailerPlate})
+                      <span className="sm:hidden truncate">Remorcă ({activeTrailerPlate})</span>
+                      <span className="hidden sm:inline">Semiremorcă ({activeTrailerPlate})</span>
                     </button>
                   </div>
                 )}
@@ -7238,25 +7250,27 @@ export const MasinileMeleFleetBoard: React.FC<{
   };
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 sm:gap-5 items-start">
       {/* LEFT / MAIN COLUMN (9 cols): "Mașinile mele" */}
-      <div className="xl:col-span-12 tahoe-glass rounded-[28px] p-5 sm:p-6 space-y-5">
-        {/* Header Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Mașinile mele
-              </h2>
-              <span className="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-xs font-extrabold text-white tabular-nums">
-                {filteredItems.length}/{items.length}
-              </span>
+      <div className="xl:col-span-12 tahoe-glass rounded-[24px] sm:rounded-[28px] p-3.5 sm:p-6 space-y-2.5 sm:space-y-5">
+        {/* Header Bar — single compact row on mobile, full header with description on desktop */}
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-4">
+          <div className="w-full sm:w-auto">
+            <div className="flex flex-nowrap sm:flex-wrap items-center justify-between sm:justify-start gap-2 sm:gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <h2 className="text-lg sm:text-3xl font-black text-white tracking-tight whitespace-nowrap">
+                  Mașinile mele
+                </h2>
+                <span className="px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full bg-white/10 border border-white/15 text-[11px] sm:text-xs font-extrabold text-white tabular-nums shrink-0">
+                  {filteredItems.length}/{items.length}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={() =>
                   setFilterKind((prev) => (prev === 'with_pdf' ? 'all' : 'with_pdf'))
                 }
-                className={`px-3 py-1 rounded-full border text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition tabular-nums ${
+                className={`px-2.5 sm:px-3 py-1 rounded-full border text-[11px] sm:text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition tabular-nums shrink-0 ${
                   filterKind === 'with_pdf'
                     ? 'bg-[#0A84FF] border-[#0A84FF]'
                     : 'bg-[#0A84FF]/12 border-[#0A84FF]/35 text-[#0A84FF] hover:bg-[#0A84FF]/20'
@@ -7268,111 +7282,126 @@ export const MasinileMeleFleetBoard: React.FC<{
                   className="w-3.5 h-3.5 shrink-0"
                   style={filterKind === 'with_pdf' ? { color: '#ffffff' } : undefined}
                 />
-                <span style={filterKind === 'with_pdf' ? { color: '#ffffff' } : undefined}>
+                <span
+                  className="sm:hidden"
+                  style={filterKind === 'with_pdf' ? { color: '#ffffff' } : undefined}
+                >
+                  {pdfCatalog.length} acte
+                </span>
+                <span
+                  className="hidden sm:inline"
+                  style={filterKind === 'with_pdf' ? { color: '#ffffff' } : undefined}
+                >
                   {pdfCatalog.length} acte atașate (CIV · Talon · RCA)
                 </span>
               </button>
             </div>
-            <p className="text-sm text-white/65 mt-1 font-medium">
+            <p className="hidden sm:block text-sm text-white/65 mt-1 font-medium">
               Click pe <strong className="text-white">Acte</strong> sau <strong className="text-white">+ Adaugă act</strong> pentru a vedea, adăuga, edita ori șterge documente (CIV, Talon, RCA, CASCO, ITP), pe vehicul pentru fișa 3D sau pe un card colorat pentru poliță.
             </p>
           </div>
-
         </div>
 
-        {/* Search, Sort & Filter Toolbar — all controls capsule-rounded */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex-1 min-w-full sm:min-w-[240px]">
-            <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+        {/* Search, Sort & Filter Toolbar — 2-per-row filters + 1-row view controls on mobile; unchanged flex toolbar on desktop */}
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-2.5">
+          <div className="relative w-full sm:flex-1 sm:min-w-[240px]">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 sm:left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Caută după număr, serie VIN, marcă sau model..."
-              className="w-full tahoe-card-inner rounded-full pl-10 pr-4 py-2.5 text-xs sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
+              placeholder="Caută număr, VIN, marcă sau model..."
+              className="w-full tahoe-card-inner rounded-full pl-9 sm:pl-10 pr-3.5 sm:pr-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white border border-white/15 focus:outline-none focus:border-[#0A84FF]"
             />
           </div>
 
-          <select
-            value={sortBy}
-            onChange={(e) =>
-              setSortBy(
-                e.target.value as 'default' | 'rca' | 'plate' | 'year'
-              )
-            }
-            className="w-full sm:w-auto tahoe-card-inner rounded-full px-4 py-2.5 text-xs font-bold text-white border border-white/15 cursor-pointer"
-          >
-            <option value="default">⇅ Sortează după: Implicit</option>
-            <option value="rca">⇅ Expirare RCA (Urgent → Lung)</option>
-            <option value="plate">⇅ Număr înmatriculare (A–Z)</option>
-            <option value="year">⇅ An fabricație (Nou → Vechi)</option>
-          </select>
+          <div className="grid grid-cols-2 gap-2 w-full sm:contents">
+            <select
+              value={sortBy}
+              onChange={(e) =>
+                setSortBy(
+                  e.target.value as 'default' | 'rca' | 'plate' | 'year'
+                )
+              }
+              aria-label="Ordine sortare flotă"
+              className="min-w-0 w-full sm:w-auto tahoe-card-inner rounded-full px-3 sm:px-4 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold text-white border border-white/15 cursor-pointer truncate"
+            >
+              <option value="default">⇅ Sortează: Implicit</option>
+              <option value="rca">⇅ Expirare RCA (Urgent)</option>
+              <option value="plate">⇅ Număr (A–Z)</option>
+              <option value="year">⇅ An (Nou → Vechi)</option>
+            </select>
 
-          <select
-            value={filterKind}
-            onChange={(e) =>
-              setFilterKind(
-                e.target.value as
-                  | 'all'
-                  | 'tractor'
-                  | 'semitrailer'
-                  | 'car'
-                  | 'with_pdf'
-                  | 'expiring'
-              )
-            }
-            className="w-full sm:w-auto tahoe-card-inner rounded-full px-4 py-2.5 text-xs font-bold text-white border border-white/15 cursor-pointer"
-          >
-            <option value="all">Toate ({items.length})</option>
-            <option value="tractor">Doar Capete Tractor</option>
-            <option value="semitrailer">Doar Semiremorci Frigo</option>
-            <option value="car">Autoturisme &amp; Autoutilitare 3.5t</option>
-            <option value="with_pdf">Cu acte atașate (CIV / Talon / RCA)</option>
-            <option value="expiring">Expiră curând (&le; 14 zile)</option>
-          </select>
+            <select
+              value={filterKind}
+              onChange={(e) =>
+                setFilterKind(
+                  e.target.value as
+                    | 'all'
+                    | 'tractor'
+                    | 'semitrailer'
+                    | 'car'
+                    | 'with_pdf'
+                    | 'expiring'
+                )
+              }
+              aria-label="Filtru categorie vehicule"
+              className="min-w-0 w-full sm:w-auto tahoe-card-inner rounded-full px-3 sm:px-4 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold text-white border border-white/15 cursor-pointer truncate"
+            >
+              <option value="all">Toate ({items.length})</option>
+              <option value="tractor">Capete Tractor</option>
+              <option value="semitrailer">Semiremorci Frigo</option>
+              <option value="car">Auto &amp; Utilitare 3.5t</option>
+              <option value="with_pdf">Cu acte atașate</option>
+              <option value="expiring">Expiră (&le; 14 zile)</option>
+            </select>
+          </div>
 
-          <button
-            type="button"
-            onClick={() => setCompactMode((p) => !p)}
-            className={`px-4 py-2.5 rounded-full text-xs font-bold border transition cursor-pointer ${
-              compactMode
-                ? 'bg-[#0A84FF] text-white border-[#0A84FF]'
-                : 'tahoe-card-inner text-white border-white/15'
-            }`}
-          >
-            ▤ Compact
-          </button>
+          <div className="flex items-center justify-between gap-2 w-full sm:contents">
+            <button
+              type="button"
+              onClick={() => setCompactMode((p) => !p)}
+              className={`px-3.5 sm:px-4 py-1.5 sm:py-2.5 rounded-full text-[11px] sm:text-xs font-bold border transition cursor-pointer shrink-0 ${
+                compactMode
+                  ? 'bg-[#0A84FF] text-white border-[#0A84FF]'
+                  : 'tahoe-card-inner text-white border-white/15'
+              }`}
+            >
+              ▤ Compact
+            </button>
 
-          {/* Comutator: Carduri / Listă (capsule pill group) */}
-          <div
-            className="inline-flex items-center gap-1 p-1 rounded-full tahoe-card-inner border border-white/15"
-            role="group"
-            aria-label="Mod afișare"
-          >
-            {(
-              [
-                { id: 'cards', label: 'Carduri', Icon: LayoutGrid },
-                { id: 'list', label: 'Listă', Icon: ListIcon },
-              ] as const
-            ).map(({ id, label, Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setViewMode(id)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
-                  viewMode === id
-                    ? 'bg-[#0A84FF] text-white shadow-sm'
-                    : 'text-white/75 hover:text-white'
-                }`}
-                aria-pressed={viewMode === id}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                {label}
-              </button>
-            ))}
+            {/* Comutator: Carduri / Listă (capsule pill group) */}
+            <div
+              className="inline-flex items-center gap-1 p-0.5 sm:p-1 rounded-full tahoe-card-inner border border-white/15 flex-1 sm:flex-initial justify-center"
+              role="group"
+              aria-label="Mod afișare"
+            >
+              {(
+                [
+                  { id: 'cards', label: 'Carduri', Icon: LayoutGrid },
+                  { id: 'list', label: 'Listă', Icon: ListIcon },
+                ] as const
+              ).map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setViewMode(id)}
+                  className={`flex-1 sm:flex-initial justify-center px-3 sm:px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
+                    viewMode === id
+                      ? 'bg-[#0A84FF] text-white shadow-sm'
+                      : 'text-white/75 hover:text-white'
+                  }`}
+                  aria-pressed={viewMode === id}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <DemoBadge
+            className="hidden sm:inline-flex"
             label="ilustrații studio"
             title="Culorile, seriile VIN, modelele, anii și polițele sunt 100% reale din Cărțile de Identitate RAR (CIV) și evidența flotei. Fotografiile și modelele 3D sunt randări de studio în culoarea exactă din CIV."
           />
@@ -7422,10 +7451,7 @@ export const MasinileMeleFleetBoard: React.FC<{
                 {/* Left: 3/4 Truck or Semi-Trailer Studio Thumbnail + Plate, Brand & Year */}
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 min-w-0">
                   {!compactMode && (
-                    <div
-                      className="w-full h-[126px] sm:w-[132px] sm:h-[92px] rounded-2xl border border-slate-200/80 flex items-center justify-center p-1.5 sm:p-1 shrink-0 shadow-xs group-hover:scale-[1.03] transition overflow-hidden"
-                      style={{ backgroundColor: '#ffffff' }}
-                    >
+                    <div className="fleet-studio-thumb w-full h-[132px] sm:w-[140px] sm:h-[94px] rounded-2xl flex items-center justify-center p-1.5 sm:p-1 shrink-0 group-hover:scale-[1.03] transition overflow-hidden">
                       {item.kind === 'semitrailer' ||
                       vinDecoded.bodyStyle === 'van-sprinter' ? (
                         <TrailerPhotoWithLivery
@@ -7446,7 +7472,7 @@ export const MasinileMeleFleetBoard: React.FC<{
                           src={getFleetCardPhoto(vinDecoded)}
                           alt={autoModelName}
                           draggable={false}
-                          className="w-full h-full object-contain"
+                          className="fleet-studio-cutout w-full h-full object-contain select-none"
                         />
                       )}
                     </div>
