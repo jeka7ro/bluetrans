@@ -784,3 +784,16 @@ export function handleAuthApiRequest(req, res, authDbPath) {
   sendJson(res, 404, { ok: false, error: 'Endpoint necunoscut.' })
   return true
 }
+
+export function authenticateApiRequest(req, authDbPath, fallbackToken = '') {
+  const store = loadAuthStore(authDbPath)
+  const bearer = readBearerToken(req) || String(fallbackToken || '').trim()
+  if (!bearer) return null
+  const sess = store.sessions[bearer]
+  if (!sess || !sess.expiresAt || Date.parse(sess.expiresAt) <= Date.now()) {
+    return null
+  }
+  const user = store.users.find((u) => u.id === sess.userId)
+  if (!user || user.status !== 'ACTIVE') return null
+  return { user: toPublicUser(user), token: bearer }
+}

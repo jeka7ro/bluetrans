@@ -291,10 +291,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         {p.trailerId}
                       </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-sm font-extrabold text-white">{p.offeredPriceEur} €</div>
-                      <div className="text-[10px] font-semibold text-[#30D158]">
-                        câștig +{p.estimatedContributionEur} €
+                    <div className="text-right shrink-0 whitespace-nowrap">
+                      <div className="text-sm font-extrabold text-white whitespace-nowrap">{p.offeredPriceEur}&#160;€</div>
+                      <div className="text-[10px] font-semibold text-[#30D158] whitespace-nowrap">
+                        câștig +{p.estimatedContributionEur}&#160;€
                       </div>
                     </div>
                   </div>

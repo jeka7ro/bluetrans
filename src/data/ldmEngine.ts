@@ -1,10 +1,20 @@
 import type { CargoOrder, RouteSegment, TrailerUnit } from './mockData';
+import {
+  computeCostBreakdown,
+  evaluateCorridorAlignment,
+  evaluatePhysicalLoadingConstraints,
+  type CostBreakdown,
+} from '../utils/smartLogisticsEngine';
 
 /**
  * Motor de alocare LDM — funcții pure (nu modifică niciodată planul real).
- * Verifică, pe fiecare segment al traseului comenzii: LDM total, LDM în zona termică
- * potrivită temperaturii, greutate. Rezultatul e folosit pentru simulări (A/B/C) și,
- * doar după confirmare, pentru actualizarea planului.
+ * Verifică pe fiecare segment:
+ *  - LDM total + rezervă Soft-Lock
+ *  - Bi-Temp (Zona 1 / Zona 2) + sugestie mutare Bulkhead
+ *  - Devieri reale pe coridorul european + calcul cost combustibil & Maut
+ *  - Ordinea fizică LIFO (Last-In First-Out)
+ *  - Tonaj util & distribuție sarcină pe axă
+ *  - Stivuibilitate, Euro-paleți și ore Tahograf CE 561/2006
  */
 
 const CITY_ALIASES: Record<string, string> = {
@@ -73,6 +83,14 @@ export interface Evaluation {
   contributionEur: number;
   detourKm: number;
   minFreeAfter: number;
+  isCorridorDetour?: boolean;
+  lifoConflict?: boolean;
+  lifoNote?: string;
+  axleNote?: string;
+  palletNote?: string;
+  tachoNote?: string;
+  suggestedBulkheadZ1Ldm?: number;
+  costBreakdown?: CostBreakdown;
 }
 
 const fmt = (n: number) => n.toFixed(1);
@@ -113,31 +131,43 @@ const pickZone = (
 };
 
 export const incrementalCostEur = (order: CargoOrder, detourKm = 0): number =>
-  Math.round(order.ldm * 55 + 30 + detourKm * 1.1);
+  computeCostBreakdown(order.ldm, detourKm, order.fromCountry, order.toCountry)
+    .totalIncrementalEur;
 
 export const evaluateAllocation = (
   trailer: TrailerUnit,
   order: CargoOrder
 ): Evaluation => {
   const revenue = order.revenueEur;
-  const base = {
-    trailerId: trailer.id,
-    orderId: order.id,
-    revenueEur: revenue,
-    detourKm: 0,
-  };
 
-  const range = findSegmentRange(trailer, order);
+  const exactRange = findSegmentRange(trailer, order);
+  const corridorAlign = exactRange
+    ? null
+    : evaluateCorridorAlignment(trailer, order.fromCity, order.toCity);
+
+  const range: [number, number] | null =
+    exactRange ??
+    (corridorAlign && corridorAlign.matchesCorridor
+      ? corridorAlign.segmentRange
+      : null);
+
+  const detourKm = exactRange ? 0 : corridorAlign?.detourKm ?? 0;
+  const isCorridorDetour = Boolean(!exactRange && range);
+
   if (!range) {
     return {
-      ...base,
+      trailerId: trailer.id,
+      orderId: order.id,
+      revenueEur: revenue,
+      detourKm,
       range: null,
       checks: [],
       verdict: 'blocked',
       headline: 'Nu merge pe traseul comenzii',
       warnings: [],
       reasons: [
-        `Remorca ${trailer.id} (${trailer.routeSummary.join(' → ')}) nu trece de la ${order.fromCity} la ${order.toCity}.`,
+        corridorAlign?.reason ||
+          `Remorca ${trailer.id} (${trailer.routeSummary.join(' → ')}) nu trece de la ${order.fromCity} la ${order.toCity}.`,
       ],
       incrementalCostEur: 0,
       contributionEur: 0,
@@ -152,8 +182,7 @@ export const evaluateAllocation = (
     const label = `${seg.fromCity} → ${seg.toCity}`;
 
     const warnings: string[] = [];
-    // Spațiul rezervat provizoriu de o ofertă în așteptare (Soft-Lock) NU blochează definitiv:
-    // doar avertizăm dacă după această alocare nu mai încap amândouă.
+    // Soft-Lock: ofertă în așteptare nu blochează definitiv, dar avertizează la conflict
     const softReserved = seg.softReservedLdm ?? 0;
     const freeBefore = seg.totalLdm - seg.occupiedLdm;
     const occupiedAfter = +(seg.occupiedLdm + order.ldm).toFixed(1);
@@ -216,27 +245,82 @@ export const evaluateAllocation = (
     });
   }
 
+  const chosenZone = checks[0]?.zone ?? null;
+  const physical = evaluatePhysicalLoadingConstraints(
+    trailer,
+    order,
+    range,
+    chosenZone,
+    detourKm
+  );
+
   const reasons = checks.flatMap((c) => c.problems);
   const warnings = checks.flatMap((c) => c.warnings);
+
+  if (physical.lifoConflict) {
+    warnings.push(physical.lifoNote);
+  }
+  if (!physical.axleBalanceOk && reasons.length === 0) {
+    warnings.push(physical.axleNote);
+  }
+  if (physical.palletWarning) {
+    warnings.push(physical.palletNote);
+  }
+  if (!physical.tachoOk) {
+    warnings.push(physical.tachoNote);
+  }
+  if (physical.suggestedBulkheadZ1Ldm && reasons.some((r) => r.includes('Zona'))) {
+    warnings.push(
+      `Sugestie Bulkhead: mutând peretele la ${physical.suggestedBulkheadZ1Ldm}m încap ambele zone fără conflict!`
+    );
+  }
+  if (isCorridorDetour && corridorAlign) {
+    warnings.unshift(
+      `Rutare cu deviere pe coridor (+${detourKm} km · +${corridorAlign.extraTimeMinutes} min HGV).`
+    );
+  }
+
   const minFreeAfter = Math.min(...checks.map((c) => c.freeAfter));
   const heavy = checks.some((c) => c.weightAfter >= c.maxWeight * 0.95);
   const blocked = reasons.length > 0;
-  const tight = !blocked && (minFreeAfter < TIGHT_FREE_LDM || heavy || warnings.length > 0);
-  const cost = incrementalCostEur(order, 0);
+  const tight =
+    !blocked &&
+    (minFreeAfter < TIGHT_FREE_LDM ||
+      heavy ||
+      warnings.length > 0 ||
+      physical.lifoConflict ||
+      !physical.tachoOk);
+
+  const costBreakdown = computeCostBreakdown(
+    order.ldm,
+    detourKm,
+    order.fromCountry,
+    order.toCountry
+  );
+  const cost = costBreakdown.totalIncrementalEur;
 
   const verdict: Verdict = blocked ? 'blocked' : tight ? 'tight' : 'ok';
   const headline = blocked
     ? 'Nu se poate'
     : tight
-      ? minFreeAfter < TIGHT_FREE_LDM
-        ? `Încape, dar rămân doar ${fmt(Math.max(0, minFreeAfter))} LDM liberi`
-        : warnings.length > 0
-          ? 'Încape, dar o ofertă în așteptare ține provizoriu același spațiu'
-          : 'Încape, dar e aproape de limita de greutate'
+      ? physical.lifoConflict
+        ? 'Încape, dar necesită ordonare LIFO / culoar'
+        : !physical.tachoOk
+          ? 'Încape fizic, dar risc ore Tahograf (Swap recomandat)'
+          : minFreeAfter < TIGHT_FREE_LDM
+            ? `Încape, dar rămân doar ${fmt(Math.max(0, minFreeAfter))} LDM liberi`
+            : warnings.length > 0
+              ? isCorridorDetour
+                ? `Compatibil pe coridor (+${detourKm} km ocol) · contribuție +${revenue - cost} €`
+                : 'Încape, dar o ofertă în așteptare ține provizoriu același spațiu'
+              : 'Încape, dar e aproape de limita de greutate'
       : `Încape pe tot traseul · rămân ${fmt(minFreeAfter)} LDM liberi`;
 
   return {
-    ...base,
+    trailerId: trailer.id,
+    orderId: order.id,
+    revenueEur: revenue,
+    detourKm,
     range,
     checks,
     verdict,
@@ -246,6 +330,14 @@ export const evaluateAllocation = (
     incrementalCostEur: cost,
     contributionEur: revenue - cost,
     minFreeAfter,
+    isCorridorDetour,
+    lifoConflict: physical.lifoConflict,
+    lifoNote: physical.lifoNote,
+    axleNote: physical.axleNote,
+    palletNote: physical.palletNote,
+    tachoNote: physical.tachoNote,
+    suggestedBulkheadZ1Ldm: physical.suggestedBulkheadZ1Ldm,
+    costBreakdown,
   };
 };
 
@@ -298,7 +390,7 @@ export const applyAllocation = (
 
 const VERDICT_RANK: Record<Verdict, number> = { ok: 0, tight: 1, blocked: 2 };
 
-/** Evaluează toate remorcile și le ordonează: cele care merg primele, cu cea mai mare rezervă. */
+/** Evaluează toate remorcile și le ordonează: cele care merg primele, cu cea mai mare contribuție. */
 export const rankTrailersForOrder = (
   trailers: TrailerUnit[],
   order: CargoOrder

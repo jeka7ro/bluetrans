@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   LayoutDashboard,
   CalendarRange,
   Truck,
   Package,
-  Bell,
   MoreHorizontal,
   X,
   Sun,
@@ -14,6 +13,9 @@ import {
   ListChecks,
   Users,
   History,
+  Building2,
+  IdCard,
+  Receipt,
 } from 'lucide-react';
 import {
   INITIAL_TRAILERS,
@@ -26,8 +28,35 @@ import {
   CargoOrder,
   SmartGroupageMatch,
   ClientShipmentProposal,
+  TrailerSwapScenario,
+  PostSwapAction,
+  GroupageCandidateVariant,
+  CargoTransferOpportunity,
   formatCountryBadge,
 } from './data/mockData';
+import { PublicClientOfferView } from './components/PublicClientOfferView';
+import {
+  resolvePublicOfferRouteFromLocation,
+  apiGetTmsState,
+  apiBootstrapTmsState,
+  apiSaveTmsState,
+  apiAcceptProposalAtomic,
+  apiDriverAction,
+  apiUploadDriverExpense,
+  apiUpdateDriverExpenseStatus,
+  apiDeleteDriverExpense,
+  apiSyncCargoTrack,
+  apiScanExchanges,
+  subscribeTmsEvents,
+  type TenantInfo,
+  type IntegrationStatusPayload,
+  type PodFileRecord,
+  type DriverExpenseRecord,
+  type SubmitDriverExpenseInput,
+  type OfferLinkRecord,
+  type OutboxEntry,
+  type TmsWorkspacePayload,
+} from './data/tmsSyncClient';
 import { ControlCenterView } from './components/ControlCenterView';
 import { TodayView } from './components/TodayView';
 import { DemoBadge } from './components/DemoBadge';
@@ -56,6 +85,10 @@ import { DriverPortalView } from './components/DriverPortalView';
 import { LoginView } from './components/LoginView';
 import { UsersAdminView } from './components/UsersAdminView';
 import { AuditLogModal, type AuditEntry } from './components/AuditLogModal';
+import {
+  HeaderNotificationsMenu,
+  type HeaderNotificationItem,
+} from './components/HeaderNotificationsMenu';
 import {
   AuthUserRecord,
   apiListUsers,
@@ -100,6 +133,7 @@ const UNASSIGNED_STORAGE_KEY = 'bluetrans_unassigned_orders_v1';
 const PROPOSALS_STORAGE_KEY = 'bluetrans_proposals_v1';
 const PLANNING_CARDS_STORAGE_KEY = 'bluetrans_planning_cards_v1';
 const ACTIVE_LOADS_STORAGE_KEY = 'bluetrans_active_loads_v1';
+const DRIVER_EXPENSES_STORAGE_KEY = 'bluetrans_driver_expenses_v1';
 
 function usePersistentState<T>(
   storageKey: string,
@@ -163,12 +197,22 @@ function normalizeTabForRole(rawTab: string | null | undefined, role: UserRoleTy
       ? ''
       : rawTab === 'analysis'
         ? 'fleet'
-        : rawTab === 'live-tracking'
-          ? 'control'
-          : rawTab;
+        : rawTab === 'drivers'
+          ? 'tacho'
+          : rawTab === 'live-tracking'
+            ? 'control'
+            : rawTab;
   if (role === 'SOFER') return 'driver';
   if (role === 'FINANCIAR') {
-    if (cleaned === 'offers' || cleaned === 'orders' || cleaned === 'fleet' || cleaned === 'control') {
+    if (
+      cleaned === 'offers' ||
+      cleaned === 'orders' ||
+      cleaned === 'fleet' ||
+      cleaned === 'clients' ||
+      cleaned === 'tacho' ||
+      cleaned === 'invoicing' ||
+      cleaned === 'control'
+    ) {
       return cleaned;
     }
     return 'fleet';
@@ -403,6 +447,30 @@ export function App() {
           typeof (c as HourlyPlanningCard).clientName === 'string'
       )
   );
+
+  useEffect(() => {
+    const seedFlagKey = 'bluetrans_planning_cards_bh67_seed_v2';
+    try {
+      if (localStorage.getItem(seedFlagKey)) return;
+      const seedIds = new Set(['card-16', 'card-17', 'card-18', 'card-19', 'card-20', 'card-21']);
+      const extraSeedCards = INITIAL_HOURLY_CARDS.filter((c) => seedIds.has(c.id));
+      if (extraSeedCards.length > 0) {
+        setPlanningCards((prev) => {
+          const existingIds = new Set(prev.map((c) => c.id));
+          const toAdd = extraSeedCards.filter((c) => !existingIds.has(c.id));
+          const normalized = prev.map((c) =>
+            c.trailerId === 'BH 67 STS' && c.driverName === 'Popa Mircea'
+              ? { ...c, driverName: 'Popa Ioan' }
+              : c
+          );
+          return toAdd.length > 0 ? [...normalized, ...toAdd] : normalized;
+        });
+      }
+      localStorage.setItem(seedFlagKey, '1');
+    } catch {
+      // ignore storage errors
+    }
+  }, [setPlanningCards]);
   const [activeLoads, setActiveLoads] = usePersistentState<ActiveLoadItem[]>(
     ACTIVE_LOADS_STORAGE_KEY,
     INITIAL_ACTIVE_LOADS,
@@ -421,6 +489,183 @@ export function App() {
   const [fleetJumpFilter, setFleetJumpFilter] =
     useState<FleetBoardExternalFilter | null>(null);
   const [ordersFocusNonce, setOrdersFocusNonce] = useState<number>(0);
+
+  // Multi-Tenant SaaS + Server Persistence & Live Sync State
+  const [activeTenantId, setActiveTenantId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('bluetrans_tenant_id_v1') || 'blue-trans';
+    } catch {
+      return 'blue-trans';
+    }
+  });
+  const [tenants, setTenants] = useState<TenantInfo[]>([]);
+  const [activeTenant, setActiveTenant] = useState<TenantInfo | undefined>(undefined);
+  const [swapScenarios, setSwapScenarios] = useState<TrailerSwapScenario[]>(
+    TRAILER_SWAP_SCENARIOS
+  );
+  const [podFiles, setPodFiles] = useState<PodFileRecord[]>([]);
+  const [driverExpenses, setDriverExpenses] = usePersistentState<DriverExpenseRecord[]>(
+    DRIVER_EXPENSES_STORAGE_KEY,
+    [],
+    (v): v is DriverExpenseRecord[] => Array.isArray(v)
+  );
+  const [offerLinks, setOfferLinks] = useState<OfferLinkRecord[]>([]);
+  const [exchangeMatches, setExchangeMatches] = useState<SmartGroupageMatch[]>([]);
+  const [outbox, setOutbox] = useState<OutboxEntry[]>([]);
+  const [driverMessages, setDriverMessages] = useState<
+    Record<string, Array<{ id: string; from: 'driver' | 'admin'; text: string; time: string }>>
+  >({});
+  const [driverCheckins, setDriverCheckins] = useState<Record<string, boolean>>({});
+  const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatusPayload | undefined>(
+    undefined
+  );
+  const [lastCargoTrackSyncAt, setLastCargoTrackSyncAt] = useState<string | undefined>(undefined);
+  const [isSyncingCargoTrack, setIsSyncingCargoTrack] = useState(false);
+  const [isScanningExchanges, setIsScanningExchanges] = useState(false);
+  const [serverConflictBanner, setServerConflictBanner] = useState<string | null>(null);
+
+  const serverRevRef = useRef<number>(0);
+  const suppressSyncRef = useRef<boolean>(false);
+  const serverHydratedRef = useRef<boolean>(false);
+
+  const applyWorkspacePayload = useCallback((ws: TmsWorkspacePayload) => {
+    suppressSyncRef.current = true;
+    serverRevRef.current = ws.rev || 0;
+    if (Array.isArray(ws.trailers) && ws.trailers.length > 0) setTrailers(ws.trailers);
+    if (Array.isArray(ws.unassignedOrders)) setUnassignedOrders(ws.unassignedOrders);
+    if (Array.isArray(ws.planningCards)) setPlanningCards(ws.planningCards);
+    if (Array.isArray(ws.activeLoads) && ws.activeLoads.length > 0) {
+      setActiveLoads(ws.activeLoads as unknown as ActiveLoadItem[]);
+    }
+    if (Array.isArray(ws.proposals) && ws.proposals.length > 0) setProposals(ws.proposals);
+    if (Array.isArray(ws.swapScenarios) && ws.swapScenarios.length > 0) {
+      setSwapScenarios(ws.swapScenarios);
+    }
+    if (Array.isArray(ws.podFiles)) setPodFiles(ws.podFiles);
+    if (Array.isArray(ws.driverExpenses)) setDriverExpenses(ws.driverExpenses);
+    if (Array.isArray(ws.offerLinks)) setOfferLinks(ws.offerLinks);
+    if (Array.isArray(ws.exchangeMatches)) setExchangeMatches(ws.exchangeMatches);
+    if (Array.isArray(ws.outbox)) setOutbox(ws.outbox);
+    if (ws.driverMessages) setDriverMessages(ws.driverMessages);
+    if (ws.driverCheckins) setDriverCheckins(ws.driverCheckins);
+    if (ws.lastCargoTrackSyncAt) setLastCargoTrackSyncAt(ws.lastCargoTrackSyncAt);
+    if (ws.integrationStatus) setIntegrationStatus(ws.integrationStatus);
+    if (Array.isArray(ws.auditLog) && ws.auditLog.length > 0) {
+      setAuditLog(ws.auditLog);
+    }
+    serverHydratedRef.current = true;
+    window.setTimeout(() => {
+      suppressSyncRef.current = false;
+    }, 60);
+  }, [setTrailers, setUnassignedOrders, setPlanningCards, setActiveLoads, setProposals]);
+
+  useEffect(() => {
+    if (!authToken) {
+      serverHydratedRef.current = false;
+      return;
+    }
+    let cancelled = false;
+    serverHydratedRef.current = false;
+
+    const hydrate = async () => {
+      try {
+        const res = await apiGetTmsState(authToken, activeTenantId);
+        if (cancelled || !res.ok) return;
+        if (res.tenants) setTenants(res.tenants);
+        if (res.tenant) setActiveTenant(res.tenant);
+        if (res.workspace?.initialized) {
+          applyWorkspacePayload(res.workspace);
+        } else {
+          const boot = await apiBootstrapTmsState(authToken, activeTenantId, {
+            trailers: activeTenantId === 'blue-trans' ? trailers : INITIAL_TRAILERS.slice(0, 4),
+            unassignedOrders: activeTenantId === 'blue-trans' ? unassignedOrders : UNASSIGNED_ORDERS.slice(0, 2),
+            planningCards: activeTenantId === 'blue-trans' ? planningCards : INITIAL_HOURLY_CARDS.slice(0, 3),
+            activeLoads,
+            proposals: activeTenantId === 'blue-trans' ? proposals : INITIAL_PROPOSALS.slice(0, 2),
+            swapScenarios: TRAILER_SWAP_SCENARIOS,
+            auditLog,
+          });
+          if (!cancelled && boot.ok && boot.workspace) {
+            applyWorkspacePayload(boot.workspace);
+          }
+        }
+      } catch {
+        // Fallback offline/localStorage transparent
+        serverHydratedRef.current = true;
+      }
+    };
+
+    void hydrate();
+
+    const unsubscribe = subscribeTmsEvents(authToken, activeTenantId, (ev) => {
+      if (cancelled) return;
+      if (typeof ev.rev === 'number' && ev.rev <= serverRevRef.current) return;
+      void apiGetTmsState(authToken, activeTenantId).then((fresh) => {
+        if (!cancelled && fresh.ok && fresh.workspace?.initialized) {
+          applyWorkspacePayload(fresh.workspace);
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [authToken, activeTenantId]);
+
+  useEffect(() => {
+    if (!authToken || !serverHydratedRef.current || suppressSyncRef.current) return;
+    const timer = window.setTimeout(() => {
+      if (suppressSyncRef.current) return;
+      void apiSaveTmsState(
+        authToken,
+        activeTenantId,
+        {
+          trailers,
+          unassignedOrders,
+          planningCards,
+          activeLoads,
+          proposals,
+          swapScenarios,
+          auditLog,
+        },
+        serverRevRef.current,
+        'sync-ui'
+      ).then((res) => {
+        if (res.ok && res.workspace) {
+          serverRevRef.current = res.workspace.rev;
+        } else if (res.conflict && res.workspace) {
+          applyWorkspacePayload(res.workspace);
+          setServerConflictBanner(
+            'Date actualizate de alt dispecer în paralel — planul a fost sincronizat automat cu ultima versiune.'
+          );
+        }
+      });
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [
+    authToken,
+    activeTenantId,
+    trailers,
+    unassignedOrders,
+    planningCards,
+    activeLoads,
+    proposals,
+    swapScenarios,
+    auditLog,
+    applyWorkspacePayload,
+  ]);
+
+  const handleSwitchTenant = (nextTenantId: string) => {
+    if (!nextTenantId || nextTenantId === activeTenantId) return;
+    try {
+      localStorage.setItem('bluetrans_tenant_id_v1', nextTenantId);
+    } catch {
+      // ignore
+    }
+    setActiveTenantId(nextTenantId);
+    setServerConflictBanner(`Spațiul companiei a fost comutat la "${nextTenantId}".`);
+  };
 
   const handleAuthenticated = (
     user: AuthUserRecord,
@@ -498,6 +743,9 @@ export function App() {
     setMobileMoreOpen(false);
     if (trailerId) {
       setSelectedTrailerId(trailerId);
+      if (tab === 'driver') {
+        setDriverTrailerId(trailerId);
+      }
     }
     window.scrollTo({
       top: 0,
@@ -894,6 +1142,24 @@ export function App() {
     if (!targetProp) return;
     logAudit(`Ofertă ACCEPTATĂ de la ${targetProp.clientName}: ${targetProp.ldmRequested} LDM, ${targetProp.offeredPriceEur} €, pe ${targetProp.trailerId}`);
 
+    if (authToken) {
+      void apiAcceptProposalAtomic(authToken, activeTenantId, proposalId).then(
+        (res) => {
+          if (res.ok && res.workspace && !res.localOnly) {
+            serverRevRef.current = res.workspace.rev || serverRevRef.current;
+          } else if (!res.ok) {
+            if (res.workspace) {
+              applyWorkspacePayload(res.workspace);
+            }
+            setServerConflictBanner(
+              res.error ||
+                'Conflict Soft-Lock: această ofertă a fost deja procesată de alt dispecer.'
+            );
+          }
+        }
+      );
+    }
+
     setProposals((prev) =>
       prev.map((p) => {
         if (p.id === proposalId) {
@@ -1145,6 +1411,338 @@ export function App() {
     );
   };
 
+  const handleConfirmGroupageVariant = (variant: GroupageCandidateVariant) => {
+    const matchedOrder = unassignedOrders.find((o) => o.id === variant.orderId);
+    if (matchedOrder) {
+      handleAssignOrderToTrailer(variant.orderId, variant.trailerId);
+    } else {
+      setTrailers((prev) =>
+        prev.map((t) => {
+          if (t.id !== variant.trailerId) return t;
+          const nextOcc = Math.min(t.totalLdm, +(t.occupiedLdm + 1.2).toFixed(1));
+          return {
+            ...t,
+            occupiedLdm: nextOcc,
+            freeLdm: Math.max(0, +(t.totalLdm - nextOcc).toFixed(1)),
+          };
+        })
+      );
+    }
+    logAudit(
+      `Variantă Grupaj ${variant.variantRank} confirmată pentru ${variant.orderId} pe ${variant.trailerId} (+${variant.criterion8_estimatedProfitEur} € profit net, +${variant.criterion5_extraKm} km)`
+    );
+    setServerConflictBanner(
+      `Grupaj confirmat pe ${variant.trailerId} (${variant.variantRank}) · +${variant.criterion8_estimatedProfitEur} € profit estimat.`
+    );
+  };
+
+  const handleApproveCargoTransfer = (xfer: CargoTransferOpportunity) => {
+    logAudit(
+      `Transfer marfă (Cross-Dock) aprobat ${xfer.code}: ${xfer.ldmTransferred} LDM (${xfer.cargoDescription}) ${xfer.donorTrailerId} → ${xfer.receiverTrailerId} la ${xfer.transferHubCity}`
+    );
+    setTrailers((prev) =>
+      prev.map((t) => {
+        if (t.id === xfer.donorTrailerId) {
+          const nextOcc = Math.max(0, +(t.occupiedLdm - xfer.ldmTransferred).toFixed(1));
+          return {
+            ...t,
+            occupiedLdm: nextOcc,
+            freeLdm: +(t.totalLdm - nextOcc).toFixed(1),
+            currentWeightTons: Math.max(0, +(t.currentWeightTons - xfer.weightTons).toFixed(1)),
+          };
+        }
+        if (t.id === xfer.receiverTrailerId) {
+          const nextOcc = Math.min(t.totalLdm, +(t.occupiedLdm + xfer.ldmTransferred).toFixed(1));
+          const segIdx = Math.max(0, t.segments.length - 1);
+          return {
+            ...t,
+            occupiedLdm: nextOcc,
+            freeLdm: Math.max(0, +(t.totalLdm - nextOcc).toFixed(1)),
+            currentWeightTons: +(t.currentWeightTons + xfer.weightTons).toFixed(1),
+            segments: t.segments.map((seg, i) =>
+              i === segIdx
+                ? {
+                    ...seg,
+                    loadingOrders: [
+                      ...seg.loadingOrders,
+                      `XFER ${xfer.code}: ${xfer.cargoDescription} (${xfer.ldmTransferred} LDM din ${xfer.donorTrailerId} via ${xfer.transferHubCity})`,
+                    ],
+                  }
+                : seg
+            ),
+          };
+        }
+        return t;
+      })
+    );
+    setServerConflictBanner(
+      `Cross-Dock aprobat: ${xfer.ldmTransferred} LDM mutați ${xfer.donorTrailerId} → ${xfer.receiverTrailerId} (${xfer.transferHubCity}).`
+    );
+  };
+
+  const handleExecuteSwap = (
+    scenario: TrailerSwapScenario,
+    actionA: PostSwapAction,
+    actionB: PostSwapAction,
+    meetingName: string
+  ) => {
+    logAudit(
+      `SWAP EXECUTAT (${scenario.code}) la ${meetingName}: ${scenario.tractorA.tractorId} ↔ ${scenario.tractorB.tractorId} · Acțiuni: A=${actionA}, B=${actionB}`
+    );
+    setSwapScenarios((prev) =>
+      prev.map((sc) =>
+        sc.id === scenario.id
+          ? {
+              ...sc,
+              approvalStatus: 'Aprobat & Activ în Planning',
+              meetingPoint: { ...sc.meetingPoint, name: meetingName },
+            }
+          : sc
+      )
+    );
+    setTrailers((prev) =>
+      prev.map((t) => {
+        if (t.id === scenario.tractorA.currentTrailerId) {
+          return {
+            ...t,
+            tractorId: scenario.tractorB.tractorId,
+            driver1: { ...t.driver1, name: scenario.tractorB.driverNames },
+            isDoubleCrew: scenario.tractorB.isDoubleCrew,
+          };
+        }
+        if (
+          scenario.tractorB.currentTrailerId !== 'Fără remorcă (Solo)' &&
+          t.id === scenario.tractorB.currentTrailerId
+        ) {
+          return {
+            ...t,
+            tractorId: scenario.tractorA.tractorId,
+            driver1: { ...t.driver1, name: scenario.tractorA.driverNames },
+            isDoubleCrew: scenario.tractorA.isDoubleCrew,
+          };
+        }
+        return t;
+      })
+    );
+    setServerConflictBanner(
+      `Swap ${scenario.code} activat la ${meetingName}. Tractoarele și planificarea au fost actualizate.`
+    );
+  };
+
+  const handleConfirmDriverSwap = (scenarioId: string, side: 'A' | 'B') => {
+    setSwapScenarios((prev) =>
+      prev.map((sc) => {
+        if (sc.id !== scenarioId) return sc;
+        const nextA = side === 'A' ? { ...sc.tractorA, driverConfirmed: true } : sc.tractorA;
+        const nextB = side === 'B' ? { ...sc.tractorB, driverConfirmed: true } : sc.tractorB;
+        const both = nextA.driverConfirmed && nextB.driverConfirmed;
+        return {
+          ...sc,
+          tractorA: nextA,
+          tractorB: nextB,
+          approvalStatus:
+            sc.approvalStatus === 'Aprobat & Activ în Planning'
+              ? sc.approvalStatus
+              : both
+                ? 'Gata de aprobare dispecer'
+                : 'Așteaptă confirmare șoferi',
+        };
+      })
+    );
+    logAudit(`Șofer Tractor ${side} a confirmat acordul Swap (${scenarioId}) din Portal`);
+    if (authToken) {
+      void apiDriverAction(authToken, activeTenantId, {
+        actionType: 'swap-confirm',
+        scenarioId,
+        side,
+      }).then((res) => {
+        if (res.ok && res.workspace) {
+          serverRevRef.current = res.workspace.rev || serverRevRef.current;
+        }
+      });
+    }
+  };
+
+  const handleDriverRampCheckin = (
+    trailerId: string,
+    segmentId: string,
+    checked: boolean
+  ) => {
+    setDriverCheckins((prev) => ({ ...prev, [segmentId]: checked }));
+    if (authToken) {
+      void apiDriverAction(authToken, activeTenantId, {
+        actionType: 'ramp-checkin',
+        trailerId,
+        segmentId,
+        checked,
+      }).then((res) => {
+        if (res.ok && res.workspace) {
+          serverRevRef.current = res.workspace.rev || serverRevRef.current;
+        }
+      });
+    }
+  };
+
+  const handleDriverTachoUpdate = (trailerId: string, tachoStatus: string) => {
+    const typedStatus = tachoStatus as TrailerUnit['driver1']['tachoStatus'];
+    setTrailers((prev) =>
+      prev.map((t) =>
+        t.id === trailerId ? { ...t, driver1: { ...t.driver1, tachoStatus: typedStatus } } : t
+      )
+    );
+    if (authToken) {
+      void apiDriverAction(authToken, activeTenantId, {
+        actionType: 'tacho-update',
+        trailerId,
+        tachoStatus,
+      }).then((res) => {
+        if (res.ok && res.workspace) {
+          serverRevRef.current = res.workspace.rev || serverRevRef.current;
+        }
+      });
+    }
+  };
+
+  const handleDriverChatSend = (trailerId: string, text: string) => {
+    const clean = text.trim();
+    if (!clean) return;
+    const roTime = new Intl.DateTimeFormat('ro-RO', {
+      timeZone: 'Europe/Bucharest',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date());
+    const fromRole: 'driver' | 'admin' = userRole === 'SOFER' ? 'driver' : 'admin';
+    setDriverMessages((prev) => ({
+      ...prev,
+      [trailerId]: [
+        ...(prev[trailerId] || []),
+        { id: `msg-${Date.now()}`, from: fromRole, text: clean, time: roTime },
+      ].slice(-80),
+    }));
+    if (authToken) {
+      void apiDriverAction(authToken, activeTenantId, {
+        actionType: 'chat-message',
+        trailerId,
+        text: clean,
+      }).then((res) => {
+        if (res.ok && res.workspace) {
+          serverRevRef.current = res.workspace.rev || serverRevRef.current;
+        }
+      });
+    }
+  };
+
+  const handleSubmitDriverExpense = async (
+    payload: SubmitDriverExpenseInput,
+    localPreview?: { dataUrl?: string; mimeType?: string; sizeBytes?: number }
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (authToken) {
+      const resp = await apiUploadDriverExpense(authToken, activeTenantId, payload);
+      if (!resp.ok) {
+        return { ok: false, error: resp.error || 'Eroare la încărcarea bonului.' };
+      }
+      if (resp.workspace) {
+        applyWorkspacePayload(resp.workspace);
+      } else if (resp.expense) {
+        const savedExp = resp.expense;
+        setDriverExpenses((prev) => [savedExp, ...prev.filter((e) => e.id !== savedExp.id)]);
+      }
+      return { ok: true };
+    }
+
+    const fallbackExp: DriverExpenseRecord = {
+      id: `exp-local-${Date.now()}`,
+      trailerId: payload.trailerId,
+      driverName: payload.driverName || 'Șofer Cabină',
+      tripRef: payload.tripRef,
+      tripLabel: payload.tripLabel,
+      category: payload.category,
+      amount: payload.amount,
+      currency: payload.currency,
+      liters: payload.liters,
+      odometerKm: payload.odometerKm,
+      vendorName: payload.vendorName,
+      expenseDate: payload.expenseDate,
+      notes: payload.notes,
+      displayName: payload.fileName,
+      mimeType: localPreview?.mimeType,
+      sizeBytes: localPreview?.sizeBytes,
+      localDataUrl: localPreview?.dataUrl,
+      status: 'Înregistrat',
+      createdAt: new Date().toISOString(),
+      createdBy: loggedUserName || payload.driverName || 'Șofer Cabină',
+    };
+    setDriverExpenses((prev) => [fallbackExp, ...prev]);
+    logAudit(
+      `Bon/Cheltuială șofer (${payload.trailerId}): ${payload.amount} ${payload.currency} @ ${payload.vendorName}`
+    );
+    return { ok: true };
+  };
+
+  const handleUpdateDriverExpenseStatus = async (
+    id: string,
+    status: 'Înregistrat' | 'Validat Admin'
+  ) => {
+    setDriverExpenses((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, status } : e))
+    );
+    if (authToken) {
+      const resp = await apiUpdateDriverExpenseStatus(authToken, activeTenantId, id, status);
+      if (resp.ok && resp.workspace) {
+        applyWorkspacePayload(resp.workspace);
+      }
+    }
+  };
+
+  const handleDeleteDriverExpense = async (id: string) => {
+    setDriverExpenses((prev) => prev.filter((e) => e.id !== id));
+    if (authToken) {
+      const resp = await apiDeleteDriverExpense(authToken, activeTenantId, id);
+      if (resp.ok && resp.workspace) {
+        applyWorkspacePayload(resp.workspace);
+      }
+    }
+  };
+
+  const handleSyncCargoTrack = () => {
+    setIsSyncingCargoTrack(true);
+    if (!authToken) {
+      const nowIso = new Date().toISOString();
+      setLastCargoTrackSyncAt(nowIso);
+      setIsSyncingCargoTrack(false);
+      return;
+    }
+    void apiSyncCargoTrack(authToken, activeTenantId)
+      .then((res) => {
+        if (res.ok && res.workspace) {
+          applyWorkspacePayload(res.workspace);
+          setServerConflictBanner(
+            `Telemetrie GPS & Tahograf G2V2 sincronizată (${res.syncMode || 'live'}).`
+          );
+        }
+      })
+      .finally(() => setIsSyncingCargoTrack(false));
+  };
+
+  const handleScanExchanges = () => {
+    setIsScanningExchanges(true);
+    if (!authToken) {
+      setIsScanningExchanges(false);
+      return;
+    }
+    void apiScanExchanges(authToken, activeTenantId)
+      .then((res) => {
+        if (res.ok && res.workspace) {
+          applyWorkspacePayload(res.workspace);
+          setServerConflictBanner(
+            `Scanare TimoCom / Trans.eu finalizată: ${res.matches?.length || 0} potriviri pe coridoarele cu spațiu liber.`
+          );
+        }
+      })
+      .finally(() => setIsScanningExchanges(false));
+  };
+
   const pendingProposalsCount = proposals.filter(
     (p) => p.status === 'Pending review'
   ).length;
@@ -1199,8 +1797,32 @@ export function App() {
       id: 'fleet',
       label: 'Flotă',
       shortLabel: 'Flotă',
-      sub: 'Camioane · Clienți · Facturi',
+      sub: 'Camioane · ITP · Acte',
       icon: Truck,
+      roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] as UserRoleType[],
+    },
+    {
+      id: 'clients',
+      label: 'Clienți',
+      shortLabel: 'Clienți',
+      sub: 'Contracte · Tarife · Coridoare',
+      icon: Building2,
+      roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] as UserRoleType[],
+    },
+    {
+      id: 'tacho',
+      label: 'Șoferi',
+      shortLabel: 'Șoferi',
+      sub: 'Documente · Tahograf · CE 561',
+      icon: IdCard,
+      roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] as UserRoleType[],
+    },
+    {
+      id: 'invoicing',
+      label: 'Facturare',
+      shortLabel: 'Facturi',
+      sub: 'Facturi · CMR · e-Factura XML',
+      icon: Receipt,
       roles: ['ADMIN', 'DISPECER', 'FINANCIAR'] as UserRoleType[],
     },
     {
@@ -1223,10 +1845,10 @@ export function App() {
     },
   ];
 
-  // Cele 5 pagini din meniu; paginile vechi (Grupaje, Swap, Oferte, Clienți) sunt file în interiorul lor
+  // Rutele din meniul principal; sub-filele interne (Grupaje, Swap, Oferte) rămân grupate sub Planificare
   const navGroupOf = (tab: string): string => {
     if (tab === 'groupage' || tab === 'swap' || tab === 'offers') return 'planning';
-    if (tab === 'clients' || tab === 'analysis') return 'fleet';
+    if (tab === 'analysis') return 'fleet';
     if (tab === 'driver') return userRole === 'SOFER' ? 'driver' : 'orders';
     return tab;
   };
@@ -1256,6 +1878,9 @@ export function App() {
     orders: 'comenzi și curse',
     driver: 'ruta și șoferul',
     control: 'KPI și poziții GPS',
+    clients: 'clienți și contracte',
+    tacho: 'șoferi, permise și tahograf',
+    invoicing: 'facturi, CMR și e-Factura XML',
   };
   const tabBar = (TAB_BARS[navGroupOf(activeTab)] || []).filter((tb) =>
     tb.roles.includes(userRole)
@@ -1302,33 +1927,272 @@ export function App() {
   const currentTabObj =
     navItems.find((n) => n.id === navGroupOf(activeTab)) || navItems[0];
 
+  const publicOfferRoute = resolvePublicOfferRouteFromLocation();
+
   const driverPortalRoute = resolveDriverPortalRouteFromLocation(
     trailers.map((t) => t.id)
   );
+  const isStandaloneDriverPortal = driverPortalRoute.isDriverPortalLink;
+  const effectiveCabTrailerId =
+    driverPortalRoute.lockedTrailerId || driverTrailerId;
+  const effectiveNotificationRole: UserRoleType = isStandaloneDriverPortal
+    ? 'SOFER'
+    : userRole;
+  const effectiveDriverUnit =
+    trailers.find(
+      (t) =>
+        t.id === effectiveCabTrailerId ||
+        t.id.replace(/[\s-]+/g, '').toUpperCase() ===
+          effectiveCabTrailerId.replace(/[\s-]+/g, '').toUpperCase()
+    ) || activeDriverUnit;
+
+  const notifScopeId = isStandaloneDriverPortal
+    ? `cab:${effectiveDriverUnit.id}`
+    : loggedUserId || userRole;
+  const notifStorageKey = `bluetrans_seen_notif_v1:${activeTenantId}:${notifScopeId}`;
+
+  const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(notifStorageKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed)
+        ? parsed.filter((x): x is string => typeof x === 'string').slice(-300)
+        : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(notifStorageKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setSeenNotificationIds(
+        Array.isArray(parsed)
+          ? parsed.filter((x): x is string => typeof x === 'string').slice(-300)
+          : []
+      );
+    } catch {
+      setSeenNotificationIds([]);
+    }
+  }, [notifStorageKey]);
+
+  const handleMarkNotificationsSeen = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      setSeenNotificationIds((prev) => {
+        const existing = new Set(prev);
+        const missing = ids.filter((id) => !existing.has(id));
+        if (missing.length === 0) return prev;
+        const next = [...prev, ...missing].slice(-300);
+        try {
+          localStorage.setItem(notifStorageKey, JSON.stringify(next));
+        } catch {
+          // ignore storage errors
+        }
+        return next;
+      });
+    },
+    [notifStorageKey]
+  );
+
+  const headerNotifications = useMemo<HeaderNotificationItem[]>(() => {
+    const normalizePlate = (val: string) =>
+      val.replace(/[\s-]+/g, '').toUpperCase();
+    const extractMsgEpoch = (msgId: string, fallbackIdx: number) => {
+      const m = msgId.match(/(\d{10,})/);
+      return m ? Number(m[1]) : fallbackIdx;
+    };
+
+    if (effectiveNotificationRole === 'SOFER') {
+      const unitNorm = normalizePlate(effectiveDriverUnit.id);
+      const cabMsgs: HeaderNotificationItem[] = Object.entries(driverMessages)
+        .filter(([tId]) => normalizePlate(tId) === unitNorm)
+        .flatMap(([tId, list]) =>
+          (list || [])
+            .filter((m) => m.from === 'admin')
+            .map((m, idx) => ({
+              id: `admin-msg:${tId}:${m.id}`,
+              kind: 'admin_message' as const,
+              title: `Mesaj Dispecerat (${effectiveDriverUnit.id})`,
+              subtitle: m.text,
+              timeLabel: m.time,
+              targetTab: 'driver',
+              trailerId: effectiveDriverUnit.id,
+              priority: extractMsgEpoch(m.id, idx),
+            }))
+        )
+        .sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+      const assignedTrips: HeaderNotificationItem[] = planningCards
+        .filter((c) => normalizePlate(c.trailerId) === unitNorm)
+        .map((c) => ({
+          id: `trip:${effectiveDriverUnit.id}:${c.id}`,
+          kind: 'trip_assigned' as const,
+          title: `Cursă: ${c.routeLabel}`,
+          subtitle: `${c.clientName} · ${c.ldm} LDM · ${c.hourSlot}`,
+          timeLabel: c.hourSlot,
+          targetTab: 'driver',
+          trailerId: effectiveDriverUnit.id,
+        }));
+
+      return [...cabMsgs, ...assignedTrips];
+    }
+
+    const canOpenDriverCab =
+      effectiveNotificationRole === 'ADMIN' ||
+      effectiveNotificationRole === 'DISPECER';
+
+    const driverChatNotifs: HeaderNotificationItem[] = canOpenDriverCab
+      ? Object.entries(driverMessages)
+          .flatMap(([tId, list]) =>
+            (list || [])
+              .filter((m) => m.from === 'driver')
+              .map((m, idx) => ({
+                id: `drv-msg:${tId}:${m.id}`,
+                kind: 'driver_message' as const,
+                title: `Mesaj șofer · ${tId}`,
+                subtitle: m.text,
+                timeLabel: m.time,
+                targetTab: 'driver',
+                trailerId: tId,
+                priority: extractMsgEpoch(m.id, idx),
+              }))
+          )
+          .sort((a, b) => (b.priority || 0) - (a.priority || 0))
+      : [];
+
+    const expenseNotifs: HeaderNotificationItem[] = driverExpenses
+      .filter((e) => e.status === 'Înregistrat')
+      .map((e) => ({
+        id: `drv-exp:${e.id}`,
+        kind: 'driver_expense' as const,
+        title: `Bon nou: ${e.vendorName || e.category}`,
+        subtitle: `${e.driverName} (${e.trailerId}) · ${e.amount} ${e.currency}`,
+        timeLabel: e.expenseDate,
+        targetTab: 'invoicing',
+      }));
+
+    const proposalNotifs: HeaderNotificationItem[] = proposals
+      .filter((p) => p.status === 'Pending review')
+      .map((p) => ({
+        id: `proposal:${p.id}`,
+        kind: 'proposal' as const,
+        title: `Ofertă client: ${p.clientName}`,
+        subtitle: `${p.routeFrom} → ${p.routeTo} · ${p.ldmRequested} LDM · €${p.offeredPriceEur}`,
+        timeLabel: p.loadingWindow,
+        targetTab: 'offers',
+      }));
+
+    const orderNotifs: HeaderNotificationItem[] =
+      effectiveNotificationRole !== 'FINANCIAR'
+        ? unassignedOrders.map((o) => ({
+            id: `order:${o.id}`,
+            kind: 'order' as const,
+            title: `Comandă nealocată: ${o.client}`,
+            subtitle: `${o.fromCity} → ${o.toCity} · ${o.ldm} LDM`,
+            timeLabel: o.loadingWindow,
+            targetTab: 'today',
+          }))
+        : [];
+
+    return [
+      ...driverChatNotifs,
+      ...expenseNotifs,
+      ...proposalNotifs,
+      ...orderNotifs,
+    ];
+  }, [
+    effectiveNotificationRole,
+    effectiveDriverUnit.id,
+    driverMessages,
+    planningCards,
+    driverExpenses,
+    proposals,
+    unassignedOrders,
+  ]);
+
+  useEffect(() => {
+    if (isStandaloneDriverPortal || effectiveNotificationRole === 'SOFER') {
+      return;
+    }
+    if (activeTab === 'offers') {
+      handleMarkNotificationsSeen(
+        headerNotifications
+          .filter((n) => n.kind === 'proposal')
+          .map((n) => n.id)
+      );
+    } else if (activeTab === 'invoicing') {
+      handleMarkNotificationsSeen(
+        headerNotifications
+          .filter((n) => n.kind === 'driver_expense')
+          .map((n) => n.id)
+      );
+    } else if (activeTab === 'today') {
+      handleMarkNotificationsSeen(
+        headerNotifications
+          .filter((n) => n.kind === 'order')
+          .map((n) => n.id)
+      );
+    } else if (activeTab === 'driver') {
+      handleMarkNotificationsSeen(
+        headerNotifications
+          .filter(
+            (n) =>
+              n.kind === 'driver_message' &&
+              n.trailerId === effectiveDriverUnit.id
+          )
+          .map((n) => n.id)
+      );
+    }
+  }, [
+    activeTab,
+    effectiveDriverUnit.id,
+    effectiveNotificationRole,
+    handleMarkNotificationsSeen,
+    headerNotifications,
+    isStandaloneDriverPortal,
+  ]);
+
+  // Link public ofertare client (/ofertare/<token> sau ?ofertare=<token>) — fără autentificare
+  if (publicOfferRoute.isPublicOffer && publicOfferRoute.token) {
+    return (
+      <I18nProvider>
+        <PublicClientOfferView
+          token={publicOfferRoute.token}
+          theme={theme}
+          onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+        />
+      </I18nProvider>
+    );
+  }
 
   // Link separat Portal Șofer (/sofer sau /sofer/BH-67-STS) — momentan fără parolă pentru testare
   if (driverPortalRoute.isDriverPortalLink) {
-    const effectiveCabTrailerId =
-      driverPortalRoute.lockedTrailerId || driverTrailerId;
     return (
       <I18nProvider>
         <div
           data-theme={theme}
           className="min-h-screen tahoe-wallpaper text-[#f5f5f7] flex flex-col transition-colors duration-200"
         >
-          <header className="tps-navy-header w-full h-[76px] px-4 sm:px-6 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 shrink-0">
+          <header className="tps-navy-header sticky top-0 z-40 w-full h-[76px] px-4 sm:px-6 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
-              <DynamicBrandLogo height={46} className="shrink-0" />
+              <DynamicBrandLogo height={38} className="shrink-0" />
               <span className="hidden sm:inline-flex px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/35 whitespace-nowrap">
                 Portal Șoferi
               </span>
             </div>
 
-            <div className="ms-auto flex items-center justify-end gap-2.5 sm:gap-3.5 shrink-0">
+            <div className="ms-auto flex items-center justify-end gap-1.5 sm:gap-3 shrink-0">
               <RomaniaLiveClock />
               <span
                 aria-hidden="true"
                 className="ro-clock-divider hidden sm:block h-4 w-px bg-white/15 shrink-0"
+              />
+              <HeaderNotificationsMenu
+                items={headerNotifications}
+                seenIds={seenNotificationIds}
+                onMarkSeen={handleMarkNotificationsSeen}
               />
               <LanguageToggleBar />
               <button
@@ -1357,7 +2221,24 @@ export function App() {
               selectedDriverTrailerId={effectiveCabTrailerId}
               onSelectDriverTrailerId={setDriverTrailerId}
               isStrictDriverRole={Boolean(driverPortalRoute.lockedTrailerId)}
-              swapScenarios={TRAILER_SWAP_SCENARIOS}
+              showMobileBottomDock
+              swapScenarios={swapScenarios}
+              onConfirmDriverSwap={handleConfirmDriverSwap}
+              authToken={authToken}
+              tenantId={activeTenantId}
+              podFiles={podFiles}
+              planningCards={planningCards}
+              activeLoads={activeLoads}
+              driverExpenses={driverExpenses}
+              serverCheckins={driverCheckins}
+              serverMessages={driverMessages}
+              onDriverRampCheckin={handleDriverRampCheckin}
+              onDriverTachoUpdate={handleDriverTachoUpdate}
+              onDriverChatSend={handleDriverChatSend}
+              onPodUploaded={(pod) => setPodFiles((prev) => [pod, ...prev])}
+              onSubmitDriverExpense={handleSubmitDriverExpense}
+              onDeleteDriverExpense={handleDeleteDriverExpense}
+              onUpdateDriverExpenseStatus={handleUpdateDriverExpenseStatus}
             />
           </main>
         </div>
@@ -1501,7 +2382,7 @@ export function App() {
       ====================================================================== */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Edge-to-Edge Header Bar — Exact Same 76px Height as Sidebar Brand Header */}
-        <header className="tps-top-header tps-navy-header sticky top-0 z-30 w-full h-[76px] px-4 sm:px-6 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 sm:gap-4 shrink-0">
+        <header className="tps-top-header tps-navy-header sticky top-0 z-40 w-full h-[76px] px-4 sm:px-6 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-2.5 sm:gap-4 shrink-0">
           {/* Left Group: Mobile Brand Only (Hidden on Desktop to avoid duplicating sidebar brand) */}
           <div className="tps-mobile-brand-wrap flex lg:hidden items-center gap-2 min-w-0 shrink">
             <DynamicBrandLogo
@@ -1524,22 +2405,12 @@ export function App() {
               aria-hidden="true"
               className="ro-clock-divider hidden sm:block h-4 w-px bg-white/15 shrink-0"
             />
-            {userRole !== 'SOFER' && (
-              <button
-                type="button"
-                onClick={() => handleNavigate('offers')}
-                className="tps-offers-icon-btn relative w-9 h-9 rounded-full tahoe-btn-secondary flex items-center justify-center transition cursor-pointer shrink-0"
-                title={`${pendingProposalsCount} Oferte clienți`}
-                aria-label={`${pendingProposalsCount} Oferte clienți`}
-              >
-                <Bell className="tps-offers-bell-icon w-4 h-4 text-[#FF9F0A]" />
-                {pendingProposalsCount > 0 && (
-                  <span className="tps-offers-badge absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-extrabold tabular-nums leading-none flex items-center justify-center">
-                    {pendingProposalsCount}
-                  </span>
-                )}
-              </button>
-            )}
+            <HeaderNotificationsMenu
+              items={headerNotifications}
+              seenIds={seenNotificationIds}
+              onMarkSeen={handleMarkNotificationsSeen}
+              onNavigate={handleNavigate}
+            />
 
             {/* Top Flag Language Switcher (RO | EN | FR | DE) */}
             <LanguageToggleBar />
@@ -1576,7 +2447,7 @@ export function App() {
 
         {/* Main View Container — Full Width with Safe Area for Floating Dock */}
         <main className="p-3 sm:p-4 lg:px-4 lg:py-4 pb-28 lg:pb-8 flex-1 max-w-full w-full mx-auto">
-          {(tabBar.length > 1 || DEMO_PAGES[activeTab]) && (
+          {(tabBar.length > 1 || (userRole !== 'SOFER' && DEMO_PAGES[activeTab])) && (
             <div
               className={`${
                 tabBar.length > 1 ? 'flex' : 'hidden sm:flex'
@@ -1621,11 +2492,24 @@ export function App() {
                   ))}
                 </div>
               )}
-              {DEMO_PAGES[activeTab] && (
+              {userRole !== 'SOFER' && DEMO_PAGES[activeTab] && (
                 <div className="hidden sm:block shrink-0">
                   <DemoBadge label={DEMO_PAGES[activeTab]} />
                 </div>
               )}
+            </div>
+          )}
+
+          {serverConflictBanner && (
+            <div className="mb-3 rounded-xl border border-[#0A84FF]/35 bg-[#0A84FF]/15 px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs text-white shadow-sm">
+              <span className="font-medium leading-snug">{serverConflictBanner}</span>
+              <button
+                type="button"
+                onClick={() => setServerConflictBanner(null)}
+                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold shrink-0 cursor-pointer"
+              >
+                Închide
+              </button>
             </div>
           )}
 
@@ -1648,6 +2532,10 @@ export function App() {
               planningCards={planningCards}
               matches={SMART_GROUPAGE_MATCHES}
               proposals={proposals}
+              swapScenarios={swapScenarios}
+              lastCargoTrackSyncAt={lastCargoTrackSyncAt}
+              isSyncingCargoTrack={isSyncingCargoTrack}
+              onSyncCargoTrack={handleSyncCargoTrack}
               onNavigate={handleNavigate}
             />
           )}
@@ -1685,12 +2573,26 @@ export function App() {
               trailers={trailers}
               matches={SMART_GROUPAGE_MATCHES}
               futureSlots={FUTURE_AVAILABILITY_SLOTS}
+              unassignedOrders={unassignedOrders}
+              planningCards={planningCards}
+              exchangeMatches={exchangeMatches}
+              isScanningExchanges={isScanningExchanges}
+              onScanExchanges={handleScanExchanges}
+              onConfirmGroupageVariant={handleConfirmGroupageVariant}
+              onApproveCargoTransfer={handleApproveCargoTransfer}
               onAcceptGroupageMatch={handleAcceptGroupageMatch}
               onNavigateToOffers={() => handleNavigate('offers')}
             />
           )}
 
-          {activeTab === 'swap' && <TrailerSwapView />}
+          {activeTab === 'swap' && (
+            <TrailerSwapView
+              trailers={trailers}
+              scenarios={swapScenarios}
+              onChangeScenarios={setSwapScenarios}
+              onExecuteSwap={handleExecuteSwap}
+            />
+          )}
 
           {activeTab === 'offers' && (
             <ClientOffersView
@@ -1700,14 +2602,49 @@ export function App() {
               onCounterOfferProposal={handleCounterOfferProposal}
               onDeclineProposal={handleDeclineProposal}
               onCreateNewProposal={handleCreateNewProposal}
+              authToken={authToken}
+              tenantId={activeTenantId}
+              companyName={activeTenant?.name || 'BLUE TRANS SPEDITION'}
+              offerLinks={offerLinks}
+              onOfferLinkCreated={(link) =>
+                setOfferLinks((prev) => [link, ...prev.filter((l) => l.token !== link.token)])
+              }
+              onNotificationSent={(entry) => setOutbox((prev) => [entry, ...prev])}
             />
           )}
 
-          {(activeTab === 'fleet' || activeTab === 'clients' || activeTab === 'analysis') && (
+          {(activeTab === 'fleet' ||
+            activeTab === 'clients' ||
+            activeTab === 'tacho' ||
+            activeTab === 'invoicing' ||
+            activeTab === 'analysis') && (
             <TmsOperationsView
               trailers={trailers}
-              subTab={activeTab === 'clients' ? 'clients' : 'fleet'}
+              subTab={
+                activeTab === 'clients'
+                  ? 'clients'
+                  : activeTab === 'tacho'
+                    ? 'tacho'
+                    : activeTab === 'invoicing'
+                      ? 'invoicing'
+                      : 'fleet'
+              }
               fleetJumpFilter={fleetJumpFilter}
+              userRole={userRole}
+              authToken={authToken}
+              activeTenant={activeTenant}
+              tenants={tenants}
+              integrationStatus={integrationStatus}
+              podFiles={podFiles}
+              driverExpenses={driverExpenses}
+              outbox={outbox}
+              onSwitchTenant={handleSwitchTenant}
+              onTenantsUpdated={setTenants}
+              onIntegrationUpdated={setIntegrationStatus}
+              onSyncCargoTrack={handleSyncCargoTrack}
+              onScanExchanges={handleScanExchanges}
+              onUpdateDriverExpenseStatus={handleUpdateDriverExpenseStatus}
+              onDeleteDriverExpense={handleDeleteDriverExpense}
             />
           )}
 
@@ -1726,7 +2663,24 @@ export function App() {
               selectedDriverTrailerId={driverTrailerId}
               onSelectDriverTrailerId={setDriverTrailerId}
               isStrictDriverRole={userRole === 'SOFER'}
-              swapScenarios={TRAILER_SWAP_SCENARIOS}
+              showMobileBottomDock={userRole === 'SOFER'}
+              swapScenarios={swapScenarios}
+              onConfirmDriverSwap={handleConfirmDriverSwap}
+              authToken={authToken}
+              tenantId={activeTenantId}
+              podFiles={podFiles}
+              planningCards={planningCards}
+              activeLoads={activeLoads}
+              driverExpenses={driverExpenses}
+              serverCheckins={driverCheckins}
+              serverMessages={driverMessages}
+              onDriverRampCheckin={handleDriverRampCheckin}
+              onDriverTachoUpdate={handleDriverTachoUpdate}
+              onDriverChatSend={handleDriverChatSend}
+              onPodUploaded={(pod) => setPodFiles((prev) => [pod, ...prev])}
+              onSubmitDriverExpense={handleSubmitDriverExpense}
+              onDeleteDriverExpense={handleDeleteDriverExpense}
+              onUpdateDriverExpenseStatus={handleUpdateDriverExpenseStatus}
             />
           )}
         </main>
@@ -1737,8 +2691,9 @@ export function App() {
       </div>
 
       {/* =====================================================================
-          MOBILE DOCKED STICKY BOTTOM BAR (5 Primary Tabs incl. Flotă + ••• Menu)
+          MOBILE DOCKED STICKY BOTTOM BAR (Admin/Staff Tabs; SOFER uses 4-tab Driver Dock)
       ====================================================================== */}
+      {userRole !== 'SOFER' && (
       <nav
         aria-label="Meniu mobil"
         className="tps-mobile-dock lg:hidden fixed inset-x-0 bottom-0 z-[45] flex items-center justify-between gap-0.5"
@@ -1784,35 +2739,34 @@ export function App() {
         })}
 
         {/* Compact Icon-Only Three-Dots (•••) Trigger — No "Mai mult" / "Meniu" Text */}
-        {userRole !== 'SOFER' && (
-          <button
-            type="button"
-            aria-expanded={mobileMoreOpen}
-            aria-controls="mobile-more-sheet"
-            aria-label="Meniu opțiuni secundare"
-            onClick={() => setMobileMoreOpen((v) => !v)}
-            className={`tps-nav-tab-btn tps-mobile-more-trigger relative w-10 min-[390px]:w-11 min-w-[42px] min-[390px]:min-w-[44px] min-h-[48px] shrink-0 flex items-center justify-center rounded-2xl border cursor-pointer ${
-              secondaryMobileTabs.some((t) => t.id === navGroupOf(activeTab)) ||
-              mobileMoreOpen
-                ? 'bg-[#007AFF] border-[#007AFF] text-white shadow-sm shadow-[#007AFF]/35'
-                : 'border-transparent text-white/70 hover:text-white'
-            }`}
-          >
-            {mobileMoreOpen ? (
-              <X className="w-5 h-5 shrink-0" aria-hidden="true" />
-            ) : (
-              <MoreHorizontal className="w-5 h-5 shrink-0" aria-hidden="true" />
+        <button
+          type="button"
+          aria-expanded={mobileMoreOpen}
+          aria-controls="mobile-more-sheet"
+          aria-label="Meniu opțiuni secundare"
+          onClick={() => setMobileMoreOpen((v) => !v)}
+          className={`tps-nav-tab-btn tps-mobile-more-trigger relative w-10 min-[390px]:w-11 min-w-[42px] min-[390px]:min-w-[44px] min-h-[48px] shrink-0 flex items-center justify-center rounded-2xl border cursor-pointer ${
+            secondaryMobileTabs.some((t) => t.id === navGroupOf(activeTab)) ||
+            mobileMoreOpen
+              ? 'bg-[#007AFF] border-[#007AFF] text-white shadow-sm shadow-[#007AFF]/35'
+              : 'border-transparent text-white/70 hover:text-white'
+          }`}
+        >
+          {mobileMoreOpen ? (
+            <X className="w-5 h-5 shrink-0" aria-hidden="true" />
+          ) : (
+            <MoreHorizontal className="w-5 h-5 shrink-0" aria-hidden="true" />
+          )}
+          {secondaryMobileTabs.some((t) => Boolean(t.badge)) &&
+            !mobileMoreOpen && (
+              <span
+                aria-hidden="true"
+                className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#FF9F0A]"
+              />
             )}
-            {secondaryMobileTabs.some((t) => Boolean(t.badge)) &&
-              !mobileMoreOpen && (
-                <span
-                  aria-hidden="true"
-                  className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#FF9F0A]"
-                />
-              )}
-          </button>
-        )}
+        </button>
       </nav>
+      )}
 
       {/* Mobile Secondary Options Sheet (•••) — Anchored Cleanly Above Docked Bottom Bar */}
       {mobileMoreOpen && (

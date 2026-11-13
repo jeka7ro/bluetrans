@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useId } from 'react';
 import { OrderDecisionModal } from './OrderDecisionModal';
 import { getRealFleet } from './FleetVinAndDossierModal';
-import { rankTrailersForOrder } from '../data/ldmEngine';
+import {
+  rankTrailersForOrder,
+  evaluateAllocation,
+  type Evaluation,
+} from '../data/ldmEngine';
+import {
+  findCityCoords,
+  CITY_COORDS_FOR_ROAD_KM,
+} from '../utils/smartLogisticsEngine';
 import {
   Calendar,
   ChevronLeft,
@@ -24,9 +32,26 @@ import {
   LocateFixed,
   Loader2,
   ExternalLink,
+  Download,
   ArrowRight,
+  Navigation,
+  FileCheck2,
   X,
 } from 'lucide-react';
+import {
+  getCachedLiveEuropeanWeather,
+  resolveLiveCheckpointWeather,
+  subscribeLiveEuropeanWeather,
+  type LiveEuropeanWeatherSnapshot,
+} from '../utils/accuWeatherCanvas';
+import {
+  buildGoogleMapsDirectionsUrl,
+  buildGoogleMapsPlaceUrl,
+  computeHgvRouteMetrics,
+  downloadTruckCorridorGpx,
+  resolveHgvVehicleProfile,
+  splitRouteStops,
+} from '../utils/googleMapsLinks';
 import {
   findFirstFuturePlanningSlot,
   formatPlanningOrderPosition,
@@ -44,8 +69,6 @@ import {
 } from '../data/mockData';
 import {
   GoogleMapsAddressInput,
-  lookupLearnedPlaceCoords,
-  normalizePlaceKey,
   detectCurrentUserGpsPlace,
   type DetectedUserGpsLocation,
 } from './GoogleMapsAddressInput';
@@ -105,12 +128,17 @@ export interface DirectTripPayload {
 
 interface Planning7DaysViewProps {
   trailers: TrailerUnit[];
-  unassignedOrders: CargoOrder[];
+  unassignedOrders?: CargoOrder[];
   proposals?: ClientShipmentProposal[];
   cards: HourlyPlanningCard[];
-  setCards: React.Dispatch<React.SetStateAction<HourlyPlanningCard[]>>;
+  setCards?: React.Dispatch<React.SetStateAction<HourlyPlanningCard[]>>;
   initialSelectedTrailerId?: string;
-  onAssignOrderToTrailer: (
+  /** Când este setat, grila devine read-only și afișează exclusiv cursele acestui camion/remorcă fără date financiare */
+  driverScopeTrailerId?: string;
+  driverTractorPlate?: string;
+  cmrStatusLookup?: (card: HourlyPlanningCard) => string;
+  onAttachExpenseForTrip?: (tripRef: string, tripLabel: string) => void;
+  onAssignOrderToTrailer?: (
     orderId: string,
     trailerId: string,
     targetDayIndex?: number,
@@ -119,13 +147,13 @@ interface Planning7DaysViewProps {
   ) => void;
   onCreateDirectTrip?: (payload: DirectTripPayload) => void;
   onDeletePlanningCard?: (cardId: string, linkedLoadId?: string) => void;
-  onMoveScheduleBlock: (
+  onMoveScheduleBlock?: (
     fromTrailerId: string,
     blockId: string,
     toTrailerId: string,
     toDayIndex: number
   ) => void;
-  onUpdateBulkhead: (trailerId: string, newZone1MaxLdm: number) => void;
+  onUpdateBulkhead?: (trailerId: string, newZone1MaxLdm: number) => void;
 }
 
 export const HOUR_SLOTS = [
@@ -142,236 +170,8 @@ export const HOUR_SLOTS = [
   '18:00',
 ];
 
-const CITY_COORDS_FOR_ROAD_KM: Record<string, [number, number]> = {
-  // România
-  oradea: [47.0722, 21.9211],
-  bors: [47.1167, 21.8167],
-  cluj: [46.7712, 23.6236],
-  'cluj-napoca': [46.7712, 23.6236],
-  turda: [46.5667, 23.7833],
-  bistrita: [47.1333, 24.5],
-  'baia mare': [47.6567, 23.585],
-  'satu mare': [47.79, 22.8857],
-  carei: [47.6833, 22.4667],
-  zalau: [47.1911, 23.0572],
-  'targu mures': [46.5425, 24.5575],
-  timisoara: [45.7489, 21.2087],
-  arad: [46.1866, 21.3123],
-  nadlac: [46.1667, 20.75],
-  deva: [45.8833, 22.9],
-  sebes: [45.96, 23.57],
-  'alba iulia': [46.0667, 23.5833],
-  sibiu: [45.7983, 24.1256],
-  brasov: [45.6427, 25.5887],
-  ploiesti: [44.9462, 26.0254],
-  pitesti: [44.8565, 24.8692],
-  craiova: [44.3302, 23.7949],
-  bucuresti: [44.4268, 26.1025],
-  constanta: [44.1598, 28.6348],
-  giurgiu: [43.9037, 25.9699],
-  bacau: [46.567, 26.9146],
-  iasi: [47.1585, 27.6014],
-  suceava: [47.6514, 26.2556],
-  // Ungaria
-  szolnok: [47.1621, 20.1825],
-  szeged: [46.253, 20.1414],
-  debrecen: [47.5316, 21.6273],
-  budapesta: [47.4979, 19.0402],
-  budapest: [47.4979, 19.0402],
-  gyor: [47.6875, 17.6504],
-  hegyeshalom: [47.9142, 17.1553],
-  mosonmagyarovar: [47.8679, 17.2699],
-  kecskemet: [46.8964, 19.6897],
-  miskolc: [48.1035, 20.7784],
-  pecs: [46.0727, 18.2323],
-  szekesfehervar: [47.186, 18.4221],
-  tatabanya: [47.5692, 18.4048],
-  // Austria
-  viena: [48.2082, 16.3738],
-  wien: [48.2082, 16.3738],
-  'wiener neudorf': [48.0845, 16.3218],
-  schwechat: [48.1411, 16.4785],
-  parndorf: [47.9944, 16.8583],
-  nickelsdorf: [47.9375, 17.0686],
-  linz: [48.3069, 14.2858],
-  wels: [48.1575, 14.0289],
-  suben: [48.4114, 13.4317],
-  salzburg: [47.8095, 13.055],
-  graz: [47.0707, 15.4395],
-  innsbruck: [47.2692, 11.4041],
-  klagenfurt: [46.6247, 14.3053],
-  // Germania
-  munchen: [48.1351, 11.582],
-  munich: [48.1351, 11.582],
-  augsburg: [48.3705, 10.8978],
-  ulm: [48.4011, 9.9876],
-  regensburg: [49.0134, 12.1016],
-  passau: [48.5665, 13.4319],
-  ingolstadt: [48.7665, 11.4257],
-  nurnberg: [49.4521, 11.0767],
-  wurzburg: [49.7913, 9.9534],
-  stuttgart: [48.7758, 9.1829],
-  heilbronn: [49.1427, 9.2109],
-  karlsruhe: [49.0069, 8.4037],
-  mannheim: [49.4875, 8.466],
-  freiburg: [47.999, 7.8421],
-  frankfurt: [50.1109, 8.6821],
-  darmstadt: [49.8728, 8.6512],
-  mainz: [49.9929, 8.2473],
-  wiesbaden: [50.0782, 8.2398],
-  kassel: [51.3127, 9.4797],
-  koln: [50.9375, 6.9603],
-  cologne: [50.9375, 6.9603],
-  bonn: [50.7374, 7.0982],
-  aachen: [50.7753, 6.0839],
-  dusseldorf: [51.2277, 6.7735],
-  duisburg: [51.4344, 6.7623],
-  essen: [51.4556, 7.0116],
-  dortmund: [51.5136, 7.4653],
-  bochum: [51.4818, 7.2162],
-  wuppertal: [51.2562, 7.1508],
-  munster: [51.9607, 7.6261],
-  bielefeld: [52.0302, 8.5325],
-  osnabruck: [52.2799, 8.0472],
-  bremen: [53.0793, 8.8017],
-  hannover: [52.3759, 9.732],
-  hamburg: [53.5511, 9.9937],
-  kiel: [54.3233, 10.1228],
-  lubeck: [53.8655, 10.6866],
-  rostock: [54.0924, 12.0991],
-  berlin: [52.52, 13.405],
-  magdeburg: [52.1205, 11.6276],
-  leipzig: [51.3397, 12.3731],
-  dresden: [51.0504, 13.7373],
-  erfurt: [50.9848, 11.0299],
-  saarbrucken: [49.2402, 6.9969],
-  // Olanda & Belgia & Luxemburg
-  groningen: [53.2194, 6.5665],
-  leeuwarden: [53.2012, 5.7999],
-  assen: [52.9925, 6.5649],
-  zwolle: [52.5168, 6.083],
-  enschede: [52.2215, 6.8937],
-  apeldoorn: [52.2112, 5.9699],
-  arnhem: [51.9851, 5.8987],
-  nijmegen: [51.8126, 5.8372],
-  almere: [52.3508, 5.2647],
-  amsterdam: [52.3676, 4.9041],
-  haarlem: [52.3874, 4.6462],
-  leiden: [52.1601, 4.497],
-  'den haag': [52.0705, 4.3007],
-  haga: [52.0705, 4.3007],
-  utrecht: [52.0907, 5.1214],
-  rotterdam: [51.9244, 4.4777],
-  breda: [51.5719, 4.7683],
-  tilburg: [51.5555, 5.0913],
-  eindhoven: [51.4416, 5.4697],
-  venlo: [51.3704, 6.1724],
-  maastricht: [50.8514, 5.691],
-  antwerpen: [51.2194, 4.4025],
-  anvers: [51.2194, 4.4025],
-  bruxelles: [50.8503, 4.3517],
-  brussels: [50.8503, 4.3517],
-  gent: [51.0543, 3.7174],
-  zeebrugge: [51.3308, 3.2075],
-  liege: [50.6326, 5.5797],
-  charleroi: [50.4108, 4.4446],
-  luxemburg: [49.6116, 6.1319],
-  luxembourg: [49.6116, 6.1319],
-  // Cehia, Slovacia, Polonia
-  praga: [50.0755, 14.4378],
-  praha: [50.0755, 14.4378],
-  brno: [49.1951, 16.6068],
-  ostrava: [49.8209, 18.2625],
-  plzen: [49.7384, 13.3736],
-  bratislava: [48.1486, 17.1077],
-  trnava: [48.3774, 17.5883],
-  nitra: [48.3061, 18.0764],
-  zilina: [49.2231, 18.7394],
-  kosice: [48.7164, 21.2611],
-  varsovia: [52.2297, 21.0122],
-  warszawa: [52.2297, 21.0122],
-  wroclaw: [51.1079, 17.0385],
-  poznan: [52.4064, 16.9252],
-  lodz: [51.7592, 19.456],
-  katowice: [50.2649, 19.0238],
-  krakow: [50.0647, 19.945],
-  gdansk: [54.352, 18.6466],
-  szczecin: [53.4285, 14.5528],
-  // Franța, Italia, Elveția, Spania, UK
-  paris: [48.8566, 2.3522],
-  lille: [50.6292, 3.0573],
-  calais: [50.9513, 1.8587],
-  strasbourg: [48.5734, 7.7521],
-  metz: [49.1193, 6.1757],
-  reims: [49.2583, 4.0317],
-  lyon: [45.764, 4.8357],
-  marseille: [43.2965, 5.3698],
-  bordeaux: [44.8378, -0.5792],
-  toulouse: [43.6047, 1.4442],
-  milano: [45.4642, 9.19],
-  torino: [45.0703, 7.6869],
-  verona: [45.4384, 10.9916],
-  padova: [45.4064, 11.8768],
-  bologna: [44.4949, 11.3426],
-  parma: [44.8015, 10.3279],
-  brescia: [45.5416, 10.2118],
-  bergamo: [45.6983, 9.6773],
-  roma: [41.9028, 12.4964],
-  zurich: [47.3769, 8.5417],
-  basel: [47.5596, 7.5886],
-  berna: [46.948, 7.4474],
-  bern: [46.948, 7.4474],
-  geneva: [46.2044, 6.1432],
-  madrid: [40.4168, -3.7038],
-  barcelona: [41.3874, 2.1686],
-  zaragoza: [41.6488, -0.8891],
-  valencia: [39.4699, -0.3763],
-  londra: [51.5072, -0.1276],
-  london: [51.5072, -0.1276],
-  dover: [51.1279, 1.3134],
-  felixstowe: [51.9617, 1.3513],
-  // Danemarca, Suedia, Norvegia & Sud-Est
-  padborg: [54.8258, 9.36],
-  kolding: [55.4904, 9.4722],
-  odense: [55.4038, 10.4024],
-  aarhus: [56.1629, 10.2039],
-  copenhaga: [55.6761, 12.5683],
-  kobenhavn: [55.6761, 12.5683],
-  malmo: [55.605, 13.0038],
-  helsingborg: [56.0465, 12.6945],
-  goteborg: [57.7089, 11.9746],
-  jonkoping: [57.7826, 14.1618],
-  stockholm: [59.3293, 18.0686],
-  oslo: [59.9139, 10.7522],
-  ljubljana: [46.0569, 14.5058],
-  maribor: [46.5547, 15.6459],
-  zagreb: [45.815, 15.9819],
-  sofia: [42.6977, 23.3219],
-  ruse: [43.8356, 25.9657],
-};
-
-const SORTED_CITY_COORD_ENTRIES = Object.entries(CITY_COORDS_FOR_ROAD_KM).sort(
-  (a, b) => b[0].length - a[0].length
-);
-
-function findCityCoords(rawText: string): [number, number] | null {
-  if (!rawText || !rawText.trim()) return null;
-  const learned = lookupLearnedPlaceCoords(rawText);
-  if (learned) return learned;
-
-  const norm = normalizePlaceKey(rawText);
-  const head = normalizePlaceKey(rawText.split(/[,(→]/)[0] || '');
-  if (head && CITY_COORDS_FOR_ROAD_KM[head]) {
-    return CITY_COORDS_FOR_ROAD_KM[head];
-  }
-  for (const [key, coords] of SORTED_CITY_COORD_ENTRIES) {
-    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(norm)) {
-      return coords;
-    }
-  }
-  return null;
-}
+// Coordonatele orașelor și findCityCoords sunt centralizate în ../utils/smartLogisticsEngine
+export { CITY_COORDS_FOR_ROAD_KM, findCityCoords };
 
 function formatRoKm(km: number): string {
   return km >= 1000
@@ -417,7 +217,7 @@ export const INITIAL_HOURLY_CARDS: HourlyPlanningCard[] = [
     kmDist: '1.580 km',
     tempCelsius: -18,
     trailerId: 'BH 67 STS',
-    driverName: 'Popa Mircea',
+    driverName: 'Popa Ioan',
     colorTheme: 'blue',
     completed: true,
   },
@@ -433,7 +233,7 @@ export const INITIAL_HOURLY_CARDS: HourlyPlanningCard[] = [
     kmDist: '540 km · ocol 14 km',
     tempCelsius: 4,
     trailerId: 'BH 67 STS',
-    driverName: 'Popa Mircea',
+    driverName: 'Popa Ioan',
     colorTheme: 'blue',
     completed: true,
   },
@@ -479,7 +279,7 @@ export const INITIAL_HOURLY_CARDS: HourlyPlanningCard[] = [
     kmDist: '1.340 km · ocol 18 km',
     tempCelsius: 4,
     trailerId: 'BH 67 STS',
-    driverName: 'Popa Mircea',
+    driverName: 'Popa Ioan',
     colorTheme: 'green',
   },
   {
@@ -524,7 +324,7 @@ export const INITIAL_HOURLY_CARDS: HourlyPlanningCard[] = [
     kmDist: '1.040 km',
     tempCelsius: -1,
     trailerId: 'BH 67 STS',
-    driverName: 'Popa Mircea',
+    driverName: 'Popa Ioan',
     colorTheme: 'blue',
   },
   {
@@ -632,6 +432,98 @@ export const INITIAL_HOURLY_CARDS: HourlyPlanningCard[] = [
     driverName: 'Kovács Attila',
     colorTheme: 'amber',
   },
+  {
+    id: 'card-16',
+    dayIndex: 2,
+    hourSlot: '08:00',
+    clientName: 'Royal FloraHolland',
+    ldm: 4.4,
+    weightTons: 5.2,
+    cargoSpec: 'Frigo Z2: 11 pal · Flori & Plante',
+    routeLabel: 'Rotterdam → Köln',
+    kmDist: '265 km',
+    tempCelsius: 4,
+    trailerId: 'BH 67 STS',
+    driverName: 'Popa Ioan',
+    colorTheme: 'green',
+    completed: true,
+  },
+  {
+    id: 'card-17',
+    dayIndex: 3,
+    hourSlot: '08:00',
+    clientName: 'Dr. Oetker Logistics',
+    ldm: 5.6,
+    weightTons: 8.4,
+    cargoSpec: 'Congelate Z1: 14 pal · Produse congelate',
+    routeLabel: 'Köln → München',
+    kmDist: '575 km',
+    tempCelsius: -18,
+    trailerId: 'BH 67 STS',
+    driverName: 'Popa Ioan',
+    colorTheme: 'blue',
+    completed: true,
+  },
+  {
+    id: 'card-18',
+    dayIndex: 4,
+    hourSlot: '08:00',
+    clientName: 'Kuehne+Nagel Fresh DE',
+    ldm: 5.2,
+    weightTons: 8.2,
+    cargoSpec: 'Bi-Temp Z1: 13 pal · Carne congelată',
+    routeLabel: 'München → Viena',
+    kmDist: '435 km',
+    tempCelsius: -18,
+    trailerId: 'BH 67 STS',
+    driverName: 'Popa Ioan',
+    colorTheme: 'blue',
+  },
+  {
+    id: 'card-19',
+    dayIndex: 4,
+    hourSlot: '10:00',
+    clientName: 'Agrana Fruit Retur',
+    ldm: 3.6,
+    weightTons: 5.4,
+    cargoSpec: 'Bi-Temp Z2: 9 pal · Concentrat fructe',
+    routeLabel: 'Viena → Oradea',
+    kmDist: '540 km',
+    tempCelsius: 4,
+    trailerId: 'BH 67 STS',
+    driverName: 'Popa Ioan',
+    colorTheme: 'green',
+  },
+  {
+    id: 'card-20',
+    dayIndex: 5,
+    hourSlot: '08:00',
+    clientName: 'Kaufland Logistic RO',
+    ldm: 4.8,
+    weightTons: 7.0,
+    cargoSpec: 'Distribuție Regională: 12 pal · Lactate',
+    routeLabel: 'Oradea → Cluj-Napoca',
+    kmDist: '155 km',
+    tempCelsius: 2,
+    trailerId: 'BH 67 STS',
+    driverName: 'Popa Ioan',
+    colorTheme: 'amber',
+  },
+  {
+    id: 'card-21',
+    dayIndex: 6,
+    hourSlot: '08:00',
+    clientName: 'Metro Cash & Carry',
+    ldm: 4.0,
+    weightTons: 5.8,
+    cargoSpec: 'Bi-Temp Z2: 10 pal · Alimente reci',
+    routeLabel: 'Cluj-Napoca → Budapesta',
+    kmDist: '410 km',
+    tempCelsius: 4,
+    trailerId: 'BH 67 STS',
+    driverName: 'Popa Ioan',
+    colorTheme: 'green',
+  },
 ];
 
 const TRUCK_BORDER_COLORS: Record<string, string> = {
@@ -698,18 +590,58 @@ const buildUnassignedTrailerFromCard = (
   };
 };
 
+const noopSetCards: React.Dispatch<React.SetStateAction<HourlyPlanningCard[]>> = () => {};
+
+function normalizePlateMatch(raw = ''): string {
+  return String(raw || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
 export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
   trailers,
-  unassignedOrders,
+  unassignedOrders = [],
   proposals = [],
   cards,
-  setCards,
+  setCards = noopSetCards,
   initialSelectedTrailerId,
-  onAssignOrderToTrailer,
+  driverScopeTrailerId,
+  driverTractorPlate,
+  cmrStatusLookup,
+  onAttachExpenseForTrip,
+  onAssignOrderToTrailer = () => {},
   onCreateDirectTrip,
   onDeletePlanningCard,
-  onUpdateBulkhead,
+  onUpdateBulkhead = () => {},
 }) => {
+  const isDriverView = Boolean(driverScopeTrailerId);
+  const [liveWeatherSnap, setLiveWeatherSnap] =
+    useState<LiveEuropeanWeatherSnapshot | null>(() =>
+      getCachedLiveEuropeanWeather()
+    );
+  useEffect(() => {
+    return subscribeLiveEuropeanWeather((snap) => setLiveWeatherSnap(snap));
+  }, []);
+
+  const scopedCards = React.useMemo(() => {
+    const scopeTrailerNorm = normalizePlateMatch(driverScopeTrailerId);
+    const scopeTractorNorm = normalizePlateMatch(driverTractorPlate);
+    return cards
+      .filter((c) => {
+        if (!scopeTrailerNorm) return true;
+        const cTrNorm = normalizePlateMatch(c.trailerId);
+        const cTracNorm = normalizePlateMatch(c.tractorPlate);
+        return (
+          cTrNorm === scopeTrailerNorm ||
+          (Boolean(scopeTractorNorm) && cTracNorm === scopeTractorNorm)
+        );
+      })
+      .map((c) => ({
+        ...c,
+        hourSlot: HOUR_SLOTS.includes(c.hourSlot) ? c.hourSlot : HOUR_SLOTS[0],
+      }));
+  }, [cards, driverScopeTrailerId, driverTractorPlate]);
+
   const qcFormId = useId();
   const [roClock, setRoClock] = useState(() =>
     formatRomaniaClockSnapshot(getRomaniaZonedNow())
@@ -738,8 +670,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
   >('all');
 
   const weekCardsAll = React.useMemo(
-    () => cards.filter((c) => (c.weekOffset ?? 0) === weekOffset),
-    [cards, weekOffset]
+    () => scopedCards.filter((c) => (c.weekOffset ?? 0) === weekOffset),
+    [scopedCards, weekOffset]
   );
 
   const weekFilterCounts = React.useMemo(() => {
@@ -770,7 +702,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
   }, []);
 
   const isSlotOccupied = (wOff: number, dIdx: number, hSlot: string): boolean =>
-    cards.some(
+    scopedCards.some(
       (c) => (c.weekOffset ?? 0) === wOff && c.dayIndex === dIdx && c.hourSlot === hSlot
     );
 
@@ -875,6 +807,12 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
   } | null>(null);
   const [hoveredCellKey, setHoveredCellKey] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
+
+  const [pendingTruckAssign, setPendingTruckAssign] = useState<{
+    card: HourlyPlanningCard;
+    trailer: TrailerUnit;
+    evaluation: Evaluation;
+  } | null>(null);
 
   // In-App Confirmation Popup State when moving / reordering a Planning Card
   const [pendingCardMove, setPendingCardMove] = useState<{
@@ -1135,6 +1073,64 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     }
   };
 
+  const commitTrailerAssignToCard = (
+    trailerObj: TrailerUnit,
+    targetCard: HourlyPlanningCard,
+    ev?: Evaluation
+  ) => {
+    setCards((prev) =>
+      prev.map((c) =>
+        c.id === targetCard.id
+          ? {
+              ...c,
+              trailerId: trailerObj.id,
+              tractorPlate: trailerObj.tractorId.split(' (')[0],
+              driverName: trailerObj.driver1.name,
+            }
+          : c
+      )
+    );
+    const contribSuffix = ev ? ` (+${ev.contributionEur} € estimat)` : '';
+    setToastMessage(
+      `Camionul ${trailerObj.id} (${trailerObj.driver1.name}) a fost alocat pe cursa "${targetCard.clientName}"${contribSuffix}!`
+    );
+  };
+
+  const evaluateAndAssignTrailerToCard = (
+    trailerObj: TrailerUnit,
+    targetCard: HourlyPlanningCard
+  ) => {
+    const [fromCity = 'Oradea', toCity = 'Rotterdam'] = targetCard.routeLabel
+      .split('→')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const syntheticOrder: CargoOrder = {
+      id: targetCard.linkedLoadId || targetCard.id,
+      client: targetCard.clientName,
+      fromCity,
+      fromCountry: '',
+      toCity,
+      toCountry: '',
+      ldm: targetCard.ldm,
+      weightTons: targetCard.weightTons,
+      pallets: Math.max(1, Math.round(targetCard.ldm * 2.4)),
+      stackable: true,
+      palletExchange: false,
+      tempReq: targetCard.tempCelsius,
+      tempZone: 'Zona 2 (Spate)',
+      revenueEur: targetCard.revenueEur ?? Math.round(targetCard.ldm * 280),
+      status: 'Nealocat',
+      loadingWindow: targetCard.hourSlot,
+      deliveryDeadline: '',
+    };
+    const ev = evaluateAllocation(trailerObj, syntheticOrder);
+    if (ev.verdict === 'ok' && !ev.lifoConflict) {
+      commitTrailerAssignToCard(trailerObj, targetCard, ev);
+    } else {
+      setPendingTruckAssign({ card: targetCard, trailer: trailerObj, evaluation: ev });
+    }
+  };
+
   // Drop handler on a Calendar Cell (dayIndex, hourSlot)
   const handleDropOnCell = (targetDayIdx: number, targetHour: string) => {
     setHoveredCellKey(null);
@@ -1189,7 +1185,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
         );
       }
     } else if (dragPayload.kind === 'TRUCK') {
-      // If user drops a truck on a cell that already has a card, assign truck to that card; otherwise open quick create ONLY if day is today or future
+      // If user drops a truck on a cell that already has a card, evaluate LDM/Temp/LIFO/Tacho before assigning
       const existingCard = cards.find(
         (c) =>
           (c.weekOffset ?? 0) === weekOffset &&
@@ -1198,20 +1194,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
       );
       const trailerObj = trailers.find((t) => t.id === dragPayload.id);
       if (existingCard && trailerObj) {
-        setCards((prev) =>
-          prev.map((c) =>
-            c.id === existingCard.id
-              ? {
-                  ...c,
-                  trailerId: trailerObj.id,
-                  driverName: trailerObj.driver1.name,
-                }
-              : c
-          )
-        );
-        setToastMessage(
-          `Camionul ${trailerObj.id} (${trailerObj.driver1.name}) a fost alocat pe cursa "${existingCard.clientName}"!`
-        );
+        evaluateAndAssignTrailerToCard(trailerObj, existingCard);
       } else if (trailerObj) {
         if (targetIsPast) {
           const snap = formatRomaniaClockSnapshot(freshNow);
@@ -1245,20 +1228,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     if (dragPayload?.kind === 'TRUCK') {
       const trailerObj = trailers.find((t) => t.id === dragPayload.id);
       if (trailerObj) {
-        setCards((prev) =>
-          prev.map((c) =>
-            c.id === targetCard.id
-              ? {
-                  ...c,
-                  trailerId: trailerObj.id,
-                  driverName: trailerObj.driver1.name,
-                }
-              : c
-          )
-        );
-        setToastMessage(
-          `Camionul ${trailerObj.id} (${trailerObj.driver1.name}) a fost asociat cu succes pe lucrarea "${targetCard.clientName}" (${targetCard.ldm} LDM)!`
-        );
+        evaluateAndAssignTrailerToCard(trailerObj, targetCard);
       }
       setDragPayload(null);
       return;
@@ -1434,6 +1404,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
       : 'https://tile.openstreetmap.org/8/131/84.png';
 
     const isDropHovered =
+      !isDriverView &&
       hoveredCardId === card.id &&
       (dragPayload?.kind === 'TRUCK' ||
         (dragPayload?.kind === 'CARD' && dragPayload.id !== card.id));
@@ -1446,6 +1417,14 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
     const isJustCreated = lastCreatedCardId === card.id;
     const cardLife = getPlanningCardLifecycle(card, trailers, roClock.zdt);
     const isPastCard = cardLife.lifecycle === 'past';
+    const routeStops = splitRouteStops(card.routeLabel);
+    const cardHgv = resolveHgvVehicleProfile(matchedTrailer?.totalLdm ?? 13.6).isHgv;
+    const routeDirectionsUrl = buildGoogleMapsDirectionsUrl(
+      routeStops[0] || 'Oradea',
+      routeStops[routeStops.length - 1] || routeStops[0] || 'Oradea',
+      routeStops.slice(1, -1),
+      { hgv: cardHgv }
+    );
 
     return (
       <article
@@ -1453,17 +1432,20 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
         data-card-id={card.id}
         data-card-theme={card.colorTheme}
         data-card-lifecycle={cardLife.lifecycle}
-        draggable
+        draggable={!isDriverView}
         onDragStart={(e) => {
+          if (isDriverView) return;
           e.stopPropagation();
           setDragPayload({ kind: 'CARD', id: card.id });
         }}
         onDragEnd={() => {
+          if (isDriverView) return;
           setDragPayload(null);
           setHoveredCellKey(null);
           setHoveredCardId(null);
         }}
         onDragOver={(e) => {
+          if (isDriverView) return;
           if (
             dragPayload?.kind === 'TRUCK' ||
             (dragPayload?.kind === 'CARD' && dragPayload.id !== card.id)
@@ -1473,13 +1455,15 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
             setHoveredCardId(card.id);
           }
         }}
-        onDragLeave={() => setHoveredCardId(null)}
-        onDrop={(e) => handleDropOnCard(e, card)}
+        onDragLeave={() => !isDriverView && setHoveredCardId(null)}
+        onDrop={(e) => !isDriverView && handleDropOnCard(e, card)}
         onClick={(e) => {
           e.stopPropagation();
           setSelectedCardDetail(card);
         }}
-        className={`planning-trip-card relative rounded-2xl cursor-grab active:cursor-grabbing overflow-hidden select-none h-[196px] w-full flex flex-col ${
+        className={`planning-trip-card relative rounded-2xl ${
+          isDriverView ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
+        } overflow-hidden select-none h-[196px] w-full flex flex-col ${
           isPastCard ? 'border-dashed border-2' : ''
         } ${isDropHovered ? 'ring-2 ring-[#0A84FF] scale-[1.02]' : ''} ${
           isJustCreated ? 'ring-2 ring-[#30D158] shadow-lg shadow-[#30D158]/25' : ''
@@ -1555,11 +1539,41 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
             </div>
           </div>
 
-          {/* Row 2: Full Route + High-Contrast Distance + Temperature */}
+          {/* Row 2: Full Route (Clickable Google Maps Stops) + Distance + Temperature */}
           <div className="planning-card-divider relative z-10 pt-1 space-y-0.5">
-            <div className="planning-card-route flex items-center gap-1 font-extrabold text-[11px] leading-tight h-[16px]">
-              <MapPin className="w-3 h-3 planning-card-icon shrink-0" />
-              <span className="truncate">{card.routeLabel}</span>
+            <div className="planning-card-route flex items-center gap-1 font-extrabold text-[11px] leading-tight h-[16px] min-w-0">
+              <a
+                href={routeDirectionsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                title={`Deschide traseul ${card.routeLabel} în Google Maps`}
+                aria-label={`Deschide traseul ${card.routeLabel} în Google Maps`}
+                className="shrink-0 hover:scale-110 transition"
+              >
+                <MapPin className="w-3 h-3 planning-card-icon shrink-0" />
+              </a>
+              <div className="flex items-center gap-0.5 min-w-0 overflow-hidden">
+                {routeStops.length > 0 ? (
+                  routeStops.map((stop, sIdx) => (
+                    <React.Fragment key={`${card.id}-stop-${sIdx}`}>
+                      {sIdx > 0 && <span className="shrink-0 opacity-75">→</span>}
+                      <a
+                        href={buildGoogleMapsPlaceUrl(stop)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={`Deschide adresa ${stop} direct în Google Maps`}
+                        className="truncate hover:underline decoration-1 underline-offset-2 cursor-pointer"
+                      >
+                        {stop}
+                      </a>
+                    </React.Fragment>
+                  ))
+                ) : (
+                  <span className="truncate">{card.routeLabel}</span>
+                )}
+              </div>
             </div>
             <div className="flex items-center justify-between gap-1 whitespace-nowrap tabular-nums text-[9.5px] h-[16px]">
               <span
@@ -1665,6 +1679,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
           order={decisionOrder}
           trailers={trailers}
           onConfirm={handleConfirmFromDecision}
+          onAdjustBulkhead={onUpdateBulkhead}
           onClose={() => setDecisionOrderId(null)}
         />
       )}
@@ -1724,14 +1739,16 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   )}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => openQuickCreateModal()}
-                  className="sm:hidden px-3 py-1.5 rounded-full tahoe-btn-primary text-[11px] font-extrabold text-white inline-flex items-center gap-1 shadow-md transition cursor-pointer shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Cursă</span>
-                </button>
+                {!isDriverView && (
+                  <button
+                    type="button"
+                    onClick={() => openQuickCreateModal()}
+                    className="sm:hidden px-3 py-1.5 rounded-full tahoe-btn-primary text-[11px] font-extrabold text-white inline-flex items-center gap-1 shadow-md transition cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Cursă</span>
+                  </button>
+                )}
               </div>
 
               <div className="flex items-center justify-between sm:justify-end gap-2 min-w-0">
@@ -1781,21 +1798,23 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => openQuickCreateModal()}
-                  className="hidden sm:inline-flex px-4 py-1.5 rounded-full tahoe-btn-primary text-xs font-extrabold text-white items-center gap-1.5 shadow-md transition cursor-pointer shrink-0 whitespace-nowrap"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Cursă nouă</span>
-                </button>
+                {!isDriverView && (
+                  <button
+                    type="button"
+                    onClick={() => openQuickCreateModal()}
+                    className="hidden sm:inline-flex px-4 py-1.5 rounded-full tahoe-btn-primary text-xs font-extrabold text-white items-center gap-1.5 shadow-md transition cursor-pointer shrink-0 whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Cursă nouă</span>
+                  </button>
+                )}
               </div>
             </div>
 
             {/* Mobile Day Selector Bar (Visible on Mobile/Tablet `< lg` — all 7 days fit on 1 row on mobile) */}
             <div className="tps-subtab-scroller lg:hidden grid grid-cols-7 gap-1 p-2 sm:flex sm:items-center sm:gap-1.5 sm:flex-nowrap sm:overflow-x-auto no-scrollbar sm:p-3 border-b border-white/10">
               {weekMeta.days.map((d, idx) => {
-                const dayCards = cards.filter(
+                const dayCards = scopedCards.filter(
                   (c) =>
                     (c.weekOffset ?? 0) === weekOffset &&
                     c.dayIndex === idx &&
@@ -1880,7 +1899,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                     hour,
                     roClock.zdt
                   );
-                  const cellCards = cards.filter(
+                  const cellCards = scopedCards.filter(
                     (c) =>
                       (c.weekOffset ?? 0) === weekOffset &&
                       c.dayIndex === mobileDayIdx &&
@@ -1895,18 +1914,22 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   };
                 });
 
-                const emptyPastSlots = slotEntries.filter(
-                  (entry) => entry.isCellEmpty && entry.isMobileSlotPast
-                );
-                const visibleEntries = showMobileEmptyPastSlots
-                  ? slotEntries
+                const emptyPastSlots = isDriverView
+                  ? []
                   : slotEntries.filter(
-                      (entry) => !(entry.isCellEmpty && entry.isMobileSlotPast)
+                      (entry) => entry.isCellEmpty && entry.isMobileSlotPast
                     );
+                const visibleEntries = isDriverView
+                  ? slotEntries.filter((entry) => !entry.isCellEmpty)
+                  : showMobileEmptyPastSlots
+                    ? slotEntries
+                    : slotEntries.filter(
+                        (entry) => !(entry.isCellEmpty && entry.isMobileSlotPast)
+                      );
 
                 return (
                   <>
-                    {emptyPastSlots.length > 0 && (
+                    {!isDriverView && emptyPastSlots.length > 0 && (
                       <button
                         type="button"
                         aria-expanded={showMobileEmptyPastSlots}
@@ -1937,7 +1960,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                         <div
                           key={hour}
                           onClick={() => {
-                            if (!isCellEmpty) return;
+                            if (isDriverView || !isCellEmpty) return;
                             if (isMobileSlotPast) {
                               setToastMessage(
                                 `Ziua ${mobileDayMeta.label} (${mobileDayMeta.date}) este deja încheiată. Selectează ziua de azi sau o zi următoare pentru o cursă nouă.`
@@ -1955,7 +1978,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                         >
                           <div className="flex-1 space-y-2 min-w-0">
                             {cellCards.map((c) => renderCellCard(c))}
-                            {isCellEmpty && !isMobileSlotPast && (
+                            {!isDriverView && isCellEmpty && !isMobileSlotPast && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1972,7 +1995,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                                 <Plus className="w-3.5 h-3.5" /> Creare rapidă · {formatPlanningOrderPosition(hour)}
                               </button>
                             )}
-                            {isCellEmpty && isMobileSlotPast && (
+                            {!isDriverView && isCellEmpty && isMobileSlotPast && (
                               <div className="text-[11px] text-white/35 text-center py-1 tabular-nums">
                                 {formatPlanningOrderPosition(hour)} · zi încheiată
                               </div>
@@ -1992,7 +2015,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                 <thead>
                   <tr className="border-b border-white/15 bg-white/[0.03]">
                     {weekMeta.days.map((day, dIdx) => {
-                      const dayCards = cards.filter(
+                      const dayCards = scopedCards.filter(
                         (c) =>
                           (c.weekOffset ?? 0) === weekOffset &&
                           c.dayIndex === dIdx &&
@@ -2068,7 +2091,23 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                 </thead>
 
                 <tbody className="divide-y divide-white/10">
-                  {HOUR_SLOTS.map((hour) => (
+                  {(() => {
+                    const activeWeekHours = isDriverView
+                      ? HOUR_SLOTS.filter((h) =>
+                          scopedCards.some(
+                            (c) =>
+                              (c.weekOffset ?? 0) === weekOffset &&
+                              c.hourSlot === h &&
+                              matchesCardFilter(c)
+                          )
+                        )
+                      : HOUR_SLOTS;
+                    const rowsToRender =
+                      isDriverView && activeWeekHours.length === 0
+                        ? [HOUR_SLOTS[0]]
+                        : activeWeekHours;
+                    return rowsToRender;
+                  })().map((hour) => (
                     <tr key={hour} className="min-h-[188px]">
                       {/* 7 Day Cells for this Order Row (No Left Hour Column) */}
                       {weekMeta.days.map((day, dIdx) => {
@@ -2079,8 +2118,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                           roClock.zdt
                         );
                         const canAcceptDragDrop =
-                          dragPayload?.kind === 'CARD' || !isPastSlot;
-                        const cellCards = cards.filter(
+                          !isDriverView && (dragPayload?.kind === 'CARD' || !isPastSlot);
+                        const cellCards = scopedCards.filter(
                           (c) =>
                             (c.weekOffset ?? 0) === weekOffset &&
                             c.dayIndex === dIdx &&
@@ -2102,10 +2141,10 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                                 setHoveredCellKey(cellKey);
                               }
                             }}
-                            onDragLeave={() => setHoveredCellKey(null)}
-                            onDrop={() => handleDropOnCell(dIdx, hour)}
+                            onDragLeave={() => !isDriverView && setHoveredCellKey(null)}
+                            onDrop={() => !isDriverView && handleDropOnCell(dIdx, hour)}
                             onClick={() => {
-                              if (!isCellEmpty) return;
+                              if (isDriverView || !isCellEmpty) return;
                               if (isPastSlot) {
                                 setToastMessage(
                                   `Ziua ${day.label} (${day.date}) este deja încheiată. Selectează o poziție din ziua de azi sau dintr-o zi următoare ori apasă „+ Cursă nouă”.`
@@ -2120,15 +2159,17 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                               });
                             }}
                             className={`group p-2 align-top border-r border-white/10 last:border-r-0 min-h-[188px] transition ${
-                              isCellEmpty
-                                ? isPastSlot
-                                  ? 'cursor-not-allowed bg-black/[0.04]'
-                                  : 'cursor-pointer'
-                                : 'cursor-default'
+                              isDriverView
+                                ? 'cursor-default'
+                                : isCellEmpty
+                                  ? isPastSlot
+                                    ? 'cursor-not-allowed bg-black/[0.04]'
+                                    : 'cursor-pointer'
+                                  : 'cursor-default'
                             } ${
                               isHovered && canAcceptDragDrop
                                 ? 'bg-[#0A84FF]/20 ring-2 ring-inset ring-[#0A84FF]'
-                                : !isPastSlot
+                                : !isDriverView && !isPastSlot
                                   ? 'hover:bg-white/[0.05]'
                                   : ''
                             }`}
@@ -2137,7 +2178,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                               {!isCellEmpty ? (
                                 <div className="space-y-2 w-full">
                                   {cellCards.map((c) => renderCellCard(c))}
-                                  {!isPastSlot && (
+                                  {!isDriverView && !isPastSlot && (
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -2155,12 +2196,16 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                                     </button>
                                   )}
                                 </div>
-                              ) : !isPastSlot ? (
+                              ) : !isDriverView && !isPastSlot ? (
                                 /* Rapid Create Hover Trigger inside Today & Future Empty Cells */
                                 <div
                                   className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center py-2.5 rounded-full border border-dashed border-[#0A84FF]/50 text-[11px] font-bold text-[#64D2FF] bg-[#0A84FF]/10"
                                 >
                                   <Plus className="w-3.5 h-3.5 mr-1" /> Creare rapidă · {formatPlanningOrderPosition(hour)}
+                                </div>
+                              ) : isDriverView && dIdx === 3 && hour === HOUR_SLOTS[0] && weekFilterCounts.all === 0 ? (
+                                <div className="text-[11px] text-white/45 text-center px-2">
+                                  Fără curse programate
                                 </div>
                               ) : null}
                             </div>
@@ -2175,7 +2220,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
           </div>
         </div>
 
-        {/* BOTTOM 2-COLUMN DOCK: Left = COMENZI ÎN AȘTEPTARE | Right = CAMIOANE & REMORCI (ECHIPE) */}
+        {/* BOTTOM 2-COLUMN DOCK: Left = COMENZI ÎN AȘTEPTARE | Right = CAMIOANE & REMORCI (Admin only) */}
+        {!isDriverView && (
         <div className="w-full grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* PANEL 1: COMENZI ÎN AȘTEPTARE */}
           <div className="tahoe-glass rounded-[24px] overflow-hidden">
@@ -2380,6 +2426,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* MODAL: DETALII COMPLETE CURSĂ / COMANDĂ DIN PLANNING */}
@@ -2397,9 +2444,27 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
           selectedCardDetail.tractorPlate ??
           detailTrailer.tractorId.split(' (')[0];
         const detailIsTwoPlates = detailTractorPlate !== detailTrailer.id;
-        const estRevenueEur = Math.round(selectedCardDetail.ldm * 210 + 180);
-        const estCostEur = Math.round(selectedCardDetail.ldm * 65 + 70);
+        const estRevenueEur = isDriverView
+          ? 0
+          : selectedCardDetail.revenueEur ?? Math.round(selectedCardDetail.ldm * 210 + 180);
+        const estCostEur = isDriverView ? 0 : Math.round(selectedCardDetail.ldm * 65 + 70);
         const estProfitEur = estRevenueEur - estCostEur;
+        const modalStops = splitRouteStops(selectedCardDetail.routeLabel);
+        const modalProfile = resolveHgvVehicleProfile(detailTrailer.totalLdm);
+        const modalDirectionsUrl = buildGoogleMapsDirectionsUrl(
+          detailMapTrip.routeDef.checkpoints[0]
+            ? `${detailMapTrip.routeDef.checkpoints[0].city}, ${detailMapTrip.routeDef.checkpoints[0].country}`
+            : modalStops[0] || 'Oradea',
+          detailMapTrip.routeDef.checkpoints[detailMapTrip.routeDef.checkpoints.length - 1]
+            ? `${detailMapTrip.routeDef.checkpoints[detailMapTrip.routeDef.checkpoints.length - 1].city}, ${detailMapTrip.routeDef.checkpoints[detailMapTrip.routeDef.checkpoints.length - 1].country}`
+            : modalStops[modalStops.length - 1] || 'Oradea',
+          detailMapTrip.routeDef.checkpoints
+            .slice(1, -1)
+            .map((cp) => `${cp.city}, ${cp.country}`),
+          { hgv: modalProfile.isHgv }
+        );
+        const driverCmrStatusLabel =
+          cmrStatusLookup?.(selectedCardDetail) || 'CMR Activ';
 
         return (
           <div
@@ -2408,16 +2473,19 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="tahoe-glass-elevated rounded-[28px] max-w-5xl w-full p-5 sm:p-6 space-y-5 shadow-2xl border border-white/20 my-auto max-h-[92vh] overflow-y-auto overscroll-contain"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Detalii cursă ${selectedCardDetail.clientName}`}
+              className="tahoe-glass-elevated rounded-[24px] sm:rounded-[28px] max-w-5xl w-full p-3 sm:p-5 space-y-2.5 sm:space-y-4 shadow-2xl border border-white/20 my-auto max-h-[92vh] overflow-y-auto overscroll-contain"
             >
-              {/* Top Header — X always in top-right corner */}
-              <div className="flex flex-nowrap items-start justify-between gap-3 border-b border-white/15 pb-4">
+              {/* Top Header — ultra-compact on mobile, X always in top-right corner */}
+              <div className="flex flex-nowrap items-start justify-between gap-2.5 border-b border-white/15 pb-2.5 sm:pb-3.5">
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/40">
-                      DETALII COMPLETE PARTIDĂ MARFĂ & CURSĂ
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="hidden sm:inline px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/40">
+                      DETALII PARTIDĂ MARFĂ &amp; CURSĂ
                     </span>
-                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#30D158]/20 text-[#30D158] border border-[#30D158]/30">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-[#30D158]/20 text-[#30D158] border border-[#30D158]/30">
                       {(() => {
                         const detDay =
                           getPlanningWeekMeta(
@@ -2425,31 +2493,51 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                             roClock.zdt
                           ).days[selectedCardDetail.dayIndex] ||
                           WEEK_DAYS[selectedCardDetail.dayIndex];
-                        return `${detDay.label} (${detDay.date}) · ${formatPlanningOrderPosition(selectedCardDetail.hourSlot)}`;
+                        return `${detDay.short} ${detDay.date} · #${getPlanningOrderNumber(selectedCardDetail.hourSlot)}`;
                       })()}
                     </span>
                     {detailMapTrip.lifecycle === 'past' ? (
-                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/35">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-extrabold inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/35">
                         <CheckCircle2 className="w-3 h-3 shrink-0" aria-hidden="true" />
-                        <span>Cursă trecută / finalizată</span>
+                        <span>Finalizată</span>
                       </span>
                     ) : detailMapTrip.lifecycle === 'planned' ? (
-                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-amber-500/20 text-amber-400 border border-amber-500/35">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-extrabold inline-flex items-center gap-1 bg-amber-500/20 text-amber-400 border border-amber-500/35">
                         <Clock className="w-3 h-3 shrink-0" aria-hidden="true" />
-                        <span>Cursă activă (Planificată)</span>
+                        <span>Planificată</span>
                       </span>
                     ) : (
-                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/40">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-extrabold inline-flex items-center gap-1 bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/40">
                         <Radio className="w-3 h-3 shrink-0" aria-hidden="true" />
-                        <span>Cursă activă (În tranzit)</span>
+                        <span>În tranzit</span>
                       </span>
                     )}
                   </div>
-                  <h2 className="text-xl sm:text-2xl font-extrabold text-white mt-1.5 truncate">
-                    {selectedCardDetail.clientName} — {selectedCardDetail.routeLabel}
+                  <h2 className="text-base sm:text-xl font-extrabold text-white mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 leading-snug">
+                    <span>{selectedCardDetail.clientName}</span>
+                    <span className="text-white/40">·</span>
+                    {modalStops.length > 0 ? (
+                      modalStops.map((stop, idx) => (
+                        <React.Fragment key={`mstop-${idx}`}>
+                          {idx > 0 && <span className="text-white/50">→</span>}
+                          <a
+                            href={buildGoogleMapsPlaceUrl(stop)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Deschide ${stop} în Google Maps`}
+                            className="inline-flex items-center gap-0.5 text-[#64D2FF] hover:underline decoration-2 underline-offset-4"
+                          >
+                            <span>{stop}</span>
+                            <ExternalLink className="w-3 h-3 opacity-80" />
+                          </a>
+                        </React.Fragment>
+                      ))
+                    ) : (
+                      <span>{selectedCardDetail.routeLabel}</span>
+                    )}
                   </h2>
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-white/75 mt-1.5">
-                    <span>Alocat pe ansamblul</span>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs text-white/75 mt-1">
+                    <span className="hidden sm:inline">Alocat pe</span>
                     {detailIsTwoPlates && (
                       <>
                         {renderEuroRoPlate(detailTractorPlate, false)}
@@ -2457,7 +2545,8 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                       </>
                     )}
                     {renderEuroRoPlate(detailTrailer.id, false)}
-                    <span>({detailTrailer.trailerType}) · Șofer:</span>
+                    <span className="hidden sm:inline">({detailTrailer.trailerType})</span>
+                    <span className="text-white/40">·</span>
                     <strong className="text-white">{detailTrailer.driver1.name}</strong>
                   </div>
                 </div>
@@ -2466,44 +2555,47 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   type="button"
                   onClick={() => setSelectedCardDetail(null)}
                   aria-label="Închide detaliile cursei"
-                  className="w-9 h-9 rounded-full tahoe-card-inner border border-white/15 hover:bg-white/15 text-white flex items-center justify-center cursor-pointer shrink-0 transition"
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full tahoe-card-inner border border-white/15 hover:bg-white/15 text-white flex items-center justify-center cursor-pointer shrink-0 transition"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* 4 Primary Metrics of This Order / Shipment */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="tahoe-card-inner rounded-2xl p-3.5">
-                  <div className="text-[10px] font-bold uppercase text-white/55">
-                    SPAȚIU OCUPAT (LDM)
+              {/* 4 Primary Metrics — single slim row even on 390px phone */}
+              <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                <div className="tahoe-card-inner rounded-xl p-1.5 sm:p-2.5 text-center sm:text-left">
+                  <div className="text-[9px] sm:text-[10px] font-bold uppercase text-white/55 truncate">
+                    <span className="sm:hidden">LDM</span>
+                    <span className="hidden sm:inline">SPAȚIU OCUPAT (LDM)</span>
                   </div>
-                  <div className="text-lg font-extrabold text-[#64D2FF] tabular-nums mt-0.5">
-                    {selectedCardDetail.ldm.toFixed(1)} LDM
+                  <div className="text-xs sm:text-base font-extrabold text-[#64D2FF] tabular-nums mt-0.5 whitespace-nowrap">
+                    {selectedCardDetail.ldm.toFixed(1)}<span className="hidden sm:inline"> LDM</span><span className="sm:hidden">m</span>
                   </div>
-                  <div className="text-[11px] text-white/55">
+                  <div className="hidden sm:block text-[10.5px] text-white/55">
                     din {detailTrailer.totalLdm.toFixed(1)}m total remorcă
                   </div>
                 </div>
 
-                <div className="tahoe-card-inner rounded-2xl p-3.5">
-                  <div className="text-[10px] font-bold uppercase text-white/55">
-                    TONAJ & PALEȚI
+                <div className="tahoe-card-inner rounded-xl p-1.5 sm:p-2.5 text-center sm:text-left">
+                  <div className="text-[9px] sm:text-[10px] font-bold uppercase text-white/55 truncate">
+                    <span className="sm:hidden">Tonaj</span>
+                    <span className="hidden sm:inline">TONAJ &amp; PALEȚI</span>
                   </div>
-                  <div className="text-lg font-extrabold text-[#FF9F0A] tabular-nums mt-0.5">
+                  <div className="text-xs sm:text-base font-extrabold text-[#FF9F0A] tabular-nums mt-0.5 whitespace-nowrap">
                     {selectedCardDetail.weightTons.toFixed(1)} T
                   </div>
-                  <div className="text-[11px] text-white/65 truncate">
+                  <div className="hidden sm:block text-[10.5px] text-white/65 truncate">
                     {selectedCardDetail.cargoSpec}
                   </div>
                 </div>
 
-                <div className="tahoe-card-inner rounded-2xl p-3.5">
-                  <div className="text-[10px] font-bold uppercase text-white/55">
-                    REGIM TERMIC CERUT
+                <div className="tahoe-card-inner rounded-xl p-1.5 sm:p-2.5 text-center sm:text-left">
+                  <div className="text-[9px] sm:text-[10px] font-bold uppercase text-white/55 truncate">
+                    <span className="sm:hidden">Temp.</span>
+                    <span className="hidden sm:inline">REGIM TERMIC CERUT</span>
                   </div>
-                  <div className="text-lg font-extrabold text-white tabular-nums mt-0.5 flex items-center gap-1">
-                    <ThermometerSnowflake className="w-4 h-4 text-[#64D2FF]" />
+                  <div className="text-xs sm:text-base font-extrabold text-white tabular-nums mt-0.5 flex items-center justify-center sm:justify-start gap-0.5 sm:gap-1 whitespace-nowrap">
+                    <ThermometerSnowflake className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#64D2FF] shrink-0" />
                     <span>
                       {selectedCardDetail.tempCelsius > 0
                         ? `+${selectedCardDetail.tempCelsius}`
@@ -2511,25 +2603,43 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                       °C
                     </span>
                   </div>
-                  <div className="text-[11px] text-white/55">
+                  <div className="hidden sm:block text-[10.5px] text-white/55">
                     Distanță / Ocol: {selectedCardDetail.kmDist}
                   </div>
                 </div>
 
-                <div className="tahoe-card-inner rounded-2xl p-3.5">
-                  <div className="text-[10px] font-bold uppercase text-white/55">
-                    CONTRIBUȚIE NETĂ EST.
+                {isDriverView ? (
+                  <div className="tahoe-card-inner rounded-xl p-1.5 sm:p-2.5 text-center sm:text-left">
+                    <div className="text-[9px] sm:text-[10px] font-bold uppercase text-white/55 truncate">
+                      <span className="sm:hidden">CMR</span>
+                      <span className="hidden sm:inline">DOCUMENT TRANSPORT (CMR)</span>
+                    </div>
+                    <div className="text-xs sm:text-base font-extrabold text-[#30D158] flex items-center justify-center sm:justify-start gap-1 mt-0.5 whitespace-nowrap truncate">
+                      <FileCheck2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0 hidden sm:inline" />
+                      <span className="truncate">{driverCmrStatusLabel}</span>
+                    </div>
+                    <div className="hidden sm:block text-[10.5px] text-white/55 tabular-nums truncate">
+                      Ref: {selectedCardDetail.id.toUpperCase()}
+                    </div>
                   </div>
-                  <div className="text-lg font-extrabold text-[#30D158] tabular-nums mt-0.5">
-                    +{estProfitEur} €
+                ) : (
+                  <div className="tahoe-card-inner rounded-xl p-1.5 sm:p-2.5 text-center sm:text-left">
+                    <div className="text-[9px] sm:text-[10px] font-bold uppercase text-white/55 truncate">
+                      <span className="sm:hidden">Net Est.</span>
+                      <span className="hidden sm:inline">CONTRIBUȚIE NETĂ EST.</span>
+                    </div>
+                    <div className="text-xs sm:text-base font-extrabold text-[#30D158] tabular-nums mt-0.5 whitespace-nowrap">
+                      +{estProfitEur} €
+                    </div>
+                    <div className="hidden sm:block text-[10.5px] text-white/55 tabular-nums">
+                      Venit {estRevenueEur} € · Cost {estCostEur} €
+                    </div>
                   </div>
-                  <div className="text-[11px] text-white/55 tabular-nums">
-                    Venit {estRevenueEur} € · Cost {estCostEur} €
-                  </div>
-                </div>
+                )}
               </div>
 
-              {/* Edit Assignment / Reschedule Controls */}
+              {/* Edit Assignment / Reschedule Controls (Admin & Dispatcher Only) */}
+              {!isDriverView && (
               <div className="tahoe-card-inner rounded-2xl p-4 space-y-3 border border-white/10">
                 <div className="text-xs font-bold uppercase tracking-wider text-[#64D2FF]">
                   MODIFICARE RAPIDĂ ALOCARE CAMION, ZI SAU ORDINEA COMENZII
@@ -2638,36 +2748,142 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   </div>
                 </div>
               </div>
+              )}
 
-              {/* Full Route Map, Segments & Bi-Temp Compartment of the Assigned Trailer */}
-              <div className="tahoe-card-inner rounded-2xl p-4 space-y-3.5 border border-white/10">
+              {/* Full Route Map, Segments, Live Meteo & Clickable Google Maps Stops */}
+              <div className="tahoe-card-inner rounded-2xl p-2.5 sm:p-3 space-y-2 border border-white/10">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="text-xs font-bold uppercase tracking-wider text-[#30D158]">
-                      TRASEUL COMPLET AL CURSEI ({detailTrailer.id}) & HARTA RUTIERĂ LIVE
+                  <div className="min-w-0">
+                    <div className="hidden sm:block text-xs font-bold uppercase tracking-wider text-[#30D158]">
+                      TRASEUL COMPLET AL CURSEI ({detailTrailer.id}) · HARTĂ &amp; METEO LIVE
                     </div>
-                    <div className="text-sm font-bold text-white mt-0.5">
-                      Coridor: {detailTrailer.routeSummary.join(' → ')} ·{' '}
+                    <div className="text-xs sm:text-sm font-bold text-white truncate">
+                      <span className="hidden sm:inline">Coridor: </span>
+                      {detailTrailer.routeSummary.join(' → ')} ·{' '}
                       <span className="text-[#64D2FF]">
                         {detailMapTrip.routeDef.totalTechKm.toLocaleString('ro-RO')} km
                       </span>{' '}
-                      · Liber remorcă:{' '}
-                      <span className="text-[#30D158]">
-                        {detailTrailer.freeLdm.toFixed(1)} LDM
+                      <span className="hidden sm:inline">
+                        · Liber remorcă:{' '}
+                        <span className="text-[#30D158]">
+                          {detailTrailer.freeLdm.toFixed(1)} LDM
+                        </span>
                       </span>
                     </div>
                   </div>
-                  {knownDetailTrailer && (
-                    <div className="text-xs text-white/70 tabular-nums">
-                      Z1: <strong>{detailTrailer.zone1Temp}°C</strong> / Z2:{' '}
-                      <strong>+{detailTrailer.zone2Temp}°C</strong> · Tahograf șofer:{' '}
-                      <strong>{detailTrailer.driver1.remainingDailyDriveHours}h azi</strong>
-                    </div>
-                  )}
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 shrink-0">
+                    {knownDetailTrailer && (
+                      <div className="hidden sm:block text-xs text-white/70 tabular-nums">
+                        Z1: <strong>{detailTrailer.zone1Temp}°C</strong> / Z2:{' '}
+                        <strong>+{detailTrailer.zone2Temp}°C</strong> · Tahograf:{' '}
+                        <strong>{detailTrailer.driver1.remainingDailyDriveHours}h azi</strong>
+                      </div>
+                    )}
+                    {detailMapTrip.routeDef.coordinates.length >= 2 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadTruckCorridorGpx(
+                            `${selectedCardDetail.trailerId}-${detailMapTrip.routeDef.tripCode}`,
+                            `${selectedCardDetail.clientName} · ${detailMapTrip.routeDef.highwayCorridor}`,
+                            detailMapTrip.routeDef.coordinates,
+                            detailMapTrip.routeDef.checkpoints.map((cp) => ({
+                              city: cp.city,
+                              country: cp.country,
+                              coords: cp.coords,
+                            }))
+                          )
+                        }
+                        title="Descarcă ruta HGV 40T (.gpx) pentru GPS dedicat de camion (Garmin dēzl, TomTom GO Expert, Sygic Truck)"
+                        className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 border border-[#0A84FF]/35 text-[#64D2FF] text-[11px] sm:text-xs font-extrabold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                      >
+                        <Download className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                        <span>GPX 40T</span>
+                      </button>
+                    )}
+                    <a
+                      href={modalDirectionsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={modalProfile.googleMapsWarningRo}
+                      className="px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-full bg-[#30D158]/20 hover:bg-[#30D158]/30 border border-[#30D158]/40 text-[#30D158] text-[11px] sm:text-xs font-extrabold inline-flex items-center gap-1 shrink-0"
+                    >
+                      <Navigation className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                      <span className="sm:hidden">Google Maps (40T)</span>
+                      <span className="hidden sm:inline">Navighează în Google Maps (40T)</span>
+                      <ExternalLink className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                    </a>
+                  </div>
                 </div>
 
-                {/* Per-Trailer Bi-Temp 13.6m Bulkhead & Segment LDM Disclosure (on-demand inside detail modal only) */}
-                {knownDetailTrailer && knownDetailTrailer.segments.length > 0 && (
+                <div
+                  className="rounded-xl px-2.5 py-1 sm:py-1.5 bg-amber-500/[0.08] border border-amber-400/25 flex flex-wrap items-center justify-between gap-1.5 text-[10.5px] sm:text-[11px]"
+                  title={modalProfile.googleMapsWarningRo}
+                >
+                  <span className="font-bold text-amber-300">
+                    {modalProfile.shortBadge} · {detailMapTrip.routeDef.estDriveHours}
+                    <span className="hidden sm:inline"> · L 16.5m · Vit. med. 73 km/h + CE 561</span>
+                  </span>
+                  <span className="hidden sm:inline text-white/70">
+                    Google Maps folosește doar profil autoturism — punctele A3/M0/A4/A8/A67 sunt injectate automat; verifică restricțiile &gt;7.5t &amp; H 4.0m.
+                  </span>
+                  <span className="sm:hidden text-white/65">
+                    Profil auto Maps — verifică &gt;7.5t
+                  </span>
+                </div>
+
+                {/* Compact Inline Checkpoints Strip (Open Any Stop in Google Maps + Live Meteo) */}
+                {detailMapTrip.routeDef.checkpoints.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {detailMapTrip.routeDef.checkpoints.map((cp, cpIdx) => {
+                      const liveWx = resolveLiveCheckpointWeather(
+                        liveWeatherSnap,
+                        cp.city,
+                        cp.coords
+                      );
+                      const wxTemp = liveWx ? Math.round(liveWx.tempC) : cp.tempC;
+                      const wxDesc = liveWx ? liveWx.weatherDescRo : cp.weatherDesc;
+                      const shortKm = cp.techKm.split(' (')[0];
+                      return (
+                        <React.Fragment key={`${cp.city}-${cpIdx}`}>
+                          {cpIdx > 0 && (
+                            <span className="text-white/30 text-[10px] font-bold hidden sm:inline">
+                              →
+                            </span>
+                          )}
+                          <a
+                            href={buildGoogleMapsPlaceUrl(`${cp.city}, ${cp.country}`)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`${cp.city} (${cp.country}) · ${wxTemp > 0 ? `+${wxTemp}` : wxTemp}°C (${wxDesc}) · ${cp.techKm} — Click pentru Google Maps`}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold transition hover:border-[#0A84FF]/60 tabular-nums ${
+                              cp.completed
+                                ? 'bg-[#30D158]/10 border-[#30D158]/30 text-white'
+                                : cp.current
+                                  ? 'bg-[#0A84FF]/15 border-[#0A84FF]/45 text-white'
+                                  : 'bg-white/[0.04] border-white/15 text-white/85'
+                            }`}
+                          >
+                            <MapPin className="w-3 h-3 text-[#64D2FF] shrink-0" />
+                            <span className="font-bold">
+                              {cpIdx + 1}. {cp.city}
+                            </span>
+                            <span className="text-[#FF9F0A] font-bold">
+                              {wxTemp > 0 ? `+${wxTemp}` : wxTemp}°C
+                            </span>
+                            <span className="text-white/55 text-[10px]">
+                              · {shortKm}
+                            </span>
+                            <ExternalLink className="w-2.5 h-2.5 text-[#64D2FF] shrink-0 opacity-80" />
+                          </a>
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Per-Trailer Bi-Temp 13.6m Bulkhead & Segment LDM Disclosure (Admin only) */}
+                {!isDriverView && knownDetailTrailer && knownDetailTrailer.segments.length > 0 && (
                   <details className="planning-bitemp-disclosure rounded-xl border border-white/12 bg-black/20 px-3.5 py-2.5 text-xs">
                     <summary className="flex flex-wrap items-center justify-between gap-2 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
                       <span className="inline-flex items-center gap-2 font-bold text-white">
@@ -2766,6 +2982,77 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
               </div>
 
               {/* Footer Actions */}
+              {isDriverView ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/15">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const [fromPart, toPart] =
+                          selectedCardDetail.routeLabel.split(' → ');
+                        setPrintableDoc({
+                          docType: 'CMR',
+                          referenceNo: selectedCardDetail.id.toUpperCase(),
+                          clientName: selectedCardDetail.clientName,
+                          fromCity: fromPart || 'Oradea',
+                          toCity: toPart || 'Rotterdam',
+                          cargoDesc: selectedCardDetail.cargoSpec,
+                          ldm: selectedCardDetail.ldm,
+                          weightTons: selectedCardDetail.weightTons,
+                          tempRegime: `${
+                            selectedCardDetail.tempCelsius > 0
+                              ? `+${selectedCardDetail.tempCelsius}`
+                              : selectedCardDetail.tempCelsius
+                          }°C`,
+                          tractorPlate: detailTractorPlate,
+                          trailerPlate: detailTrailer.id,
+                          driverName: selectedCardDetail.driverName || detailTrailer.driver1.name,
+                          revenueEur: 0,
+                        });
+                      }}
+                      className="px-4 py-2 rounded-full bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 border border-[#0A84FF]/40 text-[#64D2FF] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Vezi / Printează CMR</span>
+                    </button>
+
+                    {onAttachExpenseForTrip && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const refId =
+                            selectedCardDetail.linkedLoadId || selectedCardDetail.id;
+                          const label = `${selectedCardDetail.clientName} · ${selectedCardDetail.routeLabel}`;
+                          setSelectedCardDetail(null);
+                          onAttachExpenseForTrip(refId, label);
+                        }}
+                        className="px-4 py-2 rounded-full bg-[#FF9F0A]/15 hover:bg-[#FF9F0A]/25 border border-[#FF9F0A]/40 text-[#FF9F0A] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>Atașează Bon / Cheltuială</span>
+                      </button>
+                    )}
+
+                    <a
+                      href={modalDirectionsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2 rounded-full bg-[#30D158]/20 hover:bg-[#30D158]/30 border border-[#30D158]/40 text-[#30D158] text-xs font-bold inline-flex items-center gap-1.5"
+                    >
+                      <Navigation className="w-3.5 h-3.5" />
+                      <span>Deschide Google Maps</span>
+                    </a>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCardDetail(null)}
+                    className="px-5 py-2 rounded-full tahoe-btn-primary text-xs font-bold text-white cursor-pointer"
+                  >
+                    Închide
+                  </button>
+                </div>
+              ) : (
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/15">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -2885,6 +3172,7 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   </button>
                 </div>
               </div>
+              )}
             </div>
           </div>
         );
@@ -3190,15 +3478,22 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
                   />
                 </div>
 
-              {/* Live Road Distance & Tariff Preview */}
-              <div className="px-3 py-2 rounded-full tahoe-card-inner border border-[#0A84FF]/30 flex items-center justify-between text-[11px] tabular-nums">
-                <span className="text-white/70 font-semibold">
-                  Distanță rutieră calculată:
-                </span>
-                <span className="font-extrabold text-[#64D2FF]">
-                  {buildRoadDistanceWithDetourLabel(qcFrom, qcTo, 0)}
-                </span>
-              </div>
+              {/* Live Road Distance & HGV 40T Drive Preview */}
+              {(() => {
+                const qcDistLabel = buildRoadDistanceWithDetourLabel(qcFrom, qcTo, 0);
+                const qcKmNum = parseInt(qcDistLabel.split(' km')[0].replace(/\./g, ''), 10) || 450;
+                const qcHgv = computeHgvRouteMetrics(qcKmNum, { isHgv: true });
+                return (
+                  <div className="px-3 py-2 rounded-2xl tahoe-card-inner border border-[#0A84FF]/30 flex flex-wrap items-center justify-between gap-2 text-[11px] tabular-nums">
+                    <span className="text-white/70 font-semibold">
+                      Rută Camion 40T (73 km/h + CE 561):
+                    </span>
+                    <span className="font-extrabold text-[#64D2FF]">
+                      {qcDistLabel} · {qcHgv.tachoBreakdownRo}
+                    </span>
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-4 gap-2">
                 <div>
@@ -3582,8 +3877,89 @@ export const Planning7DaysView: React.FC<Planning7DaysViewProps> = ({
       {/* Printable CMR & Fiscal Invoice Modal */}
       <CmrAndInvoiceModal
         docData={printableDoc}
+        hideInvoice={isDriverView}
         onClose={() => setPrintableDoc(null)}
       />
+
+      {/* Conflict Verification Modal when dropping a truck with LDM/temp/tacho/LIFO warnings */}
+      {pendingTruckAssign && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={() => setPendingTruckAssign(null)}
+        >
+          <div
+            className="tahoe-glass-elevated rounded-[26px] max-w-md w-full p-5 space-y-4 border border-white/20 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold uppercase tracking-wider bg-[#FF9F0A]/20 text-[#FF9F0A] border border-[#FF9F0A]/40">
+                  Verificare LDM / Bi-Temp / LIFO
+                </span>
+                <h3 className="text-base font-extrabold text-white mt-1.5">
+                  Alocare {pendingTruckAssign.trailer.id} → {pendingTruckAssign.card.clientName}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingTruckAssign(null)}
+                className="w-8 h-8 rounded-full tahoe-card-inner border border-white/15 flex items-center justify-center text-white cursor-pointer"
+                aria-label="Închide"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="tahoe-card-inner rounded-2xl p-3 space-y-1.5 text-xs">
+              <div className="font-bold text-white">
+                {pendingTruckAssign.evaluation.headline}
+              </div>
+              {pendingTruckAssign.evaluation.reasons.map((r) => (
+                <div key={r} className="text-[#FF453A] font-semibold">
+                  ✕ {r}
+                </div>
+              ))}
+              {pendingTruckAssign.evaluation.warnings.map((w) => (
+                <div key={w} className="text-[#FF9F0A]">
+                  ⚠ {w}
+                </div>
+              ))}
+              {pendingTruckAssign.evaluation.lifoNote && (
+                <div className="text-white/75 pt-1 border-t border-white/10">
+                  {pendingTruckAssign.evaluation.lifoNote}
+                </div>
+              )}
+              {pendingTruckAssign.evaluation.tachoNote && (
+                <div className="text-white/75">{pendingTruckAssign.evaluation.tachoNote}</div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingTruckAssign(null)}
+                className="px-4 py-2 rounded-full tahoe-btn-secondary text-xs font-bold text-white cursor-pointer"
+              >
+                Anulează
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  commitTrailerAssignToCard(
+                    pendingTruckAssign.trailer,
+                    pendingTruckAssign.card,
+                    pendingTruckAssign.evaluation
+                  );
+                  setPendingTruckAssign(null);
+                }}
+                className="px-4 py-2 rounded-full text-xs font-extrabold bg-[#0A84FF] text-white cursor-pointer hover:brightness-110 transition"
+              >
+                Alocă oricum pe {pendingTruckAssign.trailer.id}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

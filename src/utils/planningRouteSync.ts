@@ -8,6 +8,7 @@ import {
   getRomaniaZonedNow,
   ROMANIA_TIME_ZONE,
 } from './romaniaTime';
+import { computeHgvRouteMetrics } from './googleMapsLinks';
 
 export type AppleWeatherType = 'sun' | 'partly-cloudy' | 'rain' | 'snow' | 'wind';
 
@@ -799,10 +800,8 @@ function isCardAbsorbedByLiveCorridor(
 }
 
 function estimateTotalTransitHours(totalKm: number): number {
-  const driveHours = totalKm / 72;
-  const dailyRests = Math.floor(driveHours / 9) * 11;
-  const shortBreaks = Math.floor(driveHours / 4.5) * 0.75;
-  return Math.max(4, Math.ceil(driveHours + dailyRests + shortBreaks + 2));
+  const hgvMetrics = computeHgvRouteMetrics(totalKm, { isHgv: true });
+  return Math.max(4, Math.ceil(hgvMetrics.totalElapsedHours + 2));
 }
 
 export function getPlanningCardLifecycle(
@@ -961,14 +960,15 @@ function buildDynamicMapTripFromCard(
         ? 0
         : Math.round(totalTechKm * ratio);
 
-  const remainingKm = Math.max(0, totalTechKm - drivenKm);
-  const estHoursNum = remainingKm / 74;
-  const estH = Math.floor(estHoursNum);
-  const estM = Math.round((estHoursNum - estH) * 60);
-  const estDriveHours =
-    lifecycleInfo.lifecycle === 'past' ? 'Finalizată' : `${estH}h ${String(estM).padStart(2, '0')}m`;
-
   const knownTrailer = trailers.find((t) => t.id === card.trailerId);
+  const remainingKm = Math.max(0, totalTechKm - drivenKm);
+  const hgvMetrics = computeHgvRouteMetrics(remainingKm, {
+    isHgv: (knownTrailer?.totalLdm ?? 13.6) > 6.2,
+    isDoubleCrew: Boolean(knownTrailer?.isDoubleCrew),
+  });
+  const estDriveHours =
+    lifecycleInfo.lifecycle === 'past' ? 'Finalizată' : hgvMetrics.compactDriveLabel;
+
   const tractorPlate =
     card.tractorPlate ||
     (knownTrailer ? knownTrailer.tractorId.split(' (')[0] : card.trailerId);

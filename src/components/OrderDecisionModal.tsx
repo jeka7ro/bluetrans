@@ -11,6 +11,7 @@ interface OrderDecisionModalProps {
   order: CargoOrder;
   trailers: TrailerUnit[];
   onConfirm: (order: CargoOrder, trailerId: string) => void;
+  onAdjustBulkhead?: (trailerId: string, z1MaxLdm: number) => void;
   onClose: () => void;
 }
 
@@ -28,6 +29,7 @@ export const OrderDecisionModal: React.FC<OrderDecisionModalProps> = ({
   order,
   trailers,
   onConfirm,
+  onAdjustBulkhead,
   onClose,
 }) => {
   const [showOthers, setShowOthers] = useState(false);
@@ -197,21 +199,62 @@ export const OrderDecisionModal: React.FC<OrderDecisionModalProps> = ({
                   </div>
                 )}
 
+                {(ev.lifoNote || ev.axleNote || ev.tachoNote || ev.palletNote) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] bg-white/[0.03] border border-white/10 rounded-xl p-2.5">
+                    {ev.lifoNote && (
+                      <div className={ev.lifoConflict ? 'text-[#FF9F0A] font-semibold' : 'text-white/75'}>
+                        <span className="font-bold text-white/90">LIFO:</span> {ev.lifoNote}
+                      </div>
+                    )}
+                    {ev.tachoNote && (
+                      <div className="text-white/75">
+                        <span className="font-bold text-white/90">Tahograf:</span> {ev.tachoNote}
+                      </div>
+                    )}
+                    {ev.axleNote && (
+                      <div className="text-white/75">
+                        <span className="font-bold text-white/90">Axă/Tonaj:</span> {ev.axleNote}
+                      </div>
+                    )}
+                    {ev.palletNote && (
+                      <div className="text-white/75">
+                        <span className="font-bold text-white/90">Paleți:</span> {ev.palletNote}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                   <div className="text-xs text-white/75 tabular-nums">
                     Venit <strong className="text-white">{ev.revenueEur} €</strong> − cost estimat{' '}
                     <strong className="text-white">{ev.incrementalCostEur} €</strong> ={' '}
                     <strong className="text-[#30D158]">+{ev.contributionEur} €</strong>
-                    <span className="text-white/50"> · ocol {ev.detourKm} km</span>
+                    <span className="text-white/50">
+                      {' '}· {ev.isCorridorDetour ? 'coridor' : 'ocol'} {ev.detourKm} km
+                      {ev.costBreakdown
+                        ? ` (motorină ${ev.costBreakdown.dieselAndWearEur} € + Maut ${ev.costBreakdown.mautTollsEur} €)`
+                        : ''}
+                    </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onConfirm(order, ev.trailerId)}
-                    className="px-4 py-2 rounded-full text-xs sm:text-sm font-extrabold cursor-pointer hover:brightness-110 transition"
-                    style={{ backgroundColor: '#0A84FF', color: '#ffffff' }}
-                  >
-                    Confirmă pe {ev.trailerId}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {ev.suggestedBulkheadZ1Ldm !== undefined && onAdjustBulkhead && (
+                      <button
+                        type="button"
+                        onClick={() => onAdjustBulkhead(ev.trailerId, ev.suggestedBulkheadZ1Ldm!)}
+                        className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-[#FF9F0A]/20 text-[#FF9F0A] border border-[#FF9F0A]/40 hover:bg-[#FF9F0A]/30 cursor-pointer transition"
+                      >
+                        Mută Bulkhead → {ev.suggestedBulkheadZ1Ldm.toFixed(1)}m
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onConfirm(order, ev.trailerId)}
+                      className="px-4 py-2 rounded-full text-xs sm:text-sm font-extrabold cursor-pointer hover:brightness-110 transition"
+                      style={{ backgroundColor: '#0A84FF', color: '#ffffff' }}
+                    >
+                      Confirmă pe {ev.trailerId}
+                    </button>
+                  </div>
                 </div>
               </div>
             );

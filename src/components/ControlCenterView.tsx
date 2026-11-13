@@ -11,11 +11,13 @@ import {
   Sparkles,
   CheckCircle2,
   Radio,
+  RefreshCw,
 } from 'lucide-react';
 import {
   TrailerUnit,
   SmartGroupageMatch,
   ClientShipmentProposal,
+  TrailerSwapScenario,
 } from '../data/mockData';
 import type { HourlyPlanningCard } from './Planning7DaysView';
 import { EuropeLiveMap } from './EuropeLiveMap';
@@ -27,6 +29,10 @@ interface ControlCenterViewProps {
   planningCards?: HourlyPlanningCard[];
   matches: SmartGroupageMatch[];
   proposals: ClientShipmentProposal[];
+  swapScenarios?: TrailerSwapScenario[];
+  lastCargoTrackSyncAt?: string;
+  isSyncingCargoTrack?: boolean;
+  onSyncCargoTrack?: () => void;
   onNavigate: (tab: string, trailerId?: string) => void;
 }
 
@@ -35,6 +41,10 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
   planningCards = [],
   matches,
   proposals,
+  swapScenarios = [],
+  lastCargoTrackSyncAt,
+  isSyncingCargoTrack = false,
+  onSyncCargoTrack,
   onNavigate,
 }) => {
   const [roNow, setRoNow] = useState(() => getRomaniaZonedNow());
@@ -55,6 +65,10 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
   const displayedListTrips = tripScopeFilter === 'past' ? pastTrips : activeTrips;
 
   const totalFreeLdm = trailers.reduce((acc, t) => acc + t.freeLdm, 0);
+  const trailersWithFreeSpaceCount = trailers.filter((t) => t.freeLdm > 0.4).length;
+  const soonFreeTrailersCount = trailers.filter(
+    (t) => t.freeLdm >= 2.0 || t.segments.some((s) => s.unloadingOrders.length > 0)
+  ).length;
   const realFleetCounts = (() => {
     const f = getRealFleet();
     return { trailers: f.trailers.length, tractors: f.tractors.length };
@@ -62,6 +76,10 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
   const pendingProposals = proposals.filter(
     (p) => p.status === 'Pending review'
   );
+  const pendingSwapsCount = swapScenarios.filter(
+    (s) => s.approvalStatus !== 'Aprobat & Activ în Planning'
+  ).length;
+  const urgentAlertsCount = pendingProposals.length + pendingSwapsCount;
 
   const renderEuroRoPlate = (plate: string) => (
     <span
@@ -116,8 +134,8 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
             <span>Cu spațiu liber</span>
             <PackageCheck className="hidden sm:block w-4 h-4 text-[#30D158]" aria-hidden="true" />
           </div>
-          <div className="text-2xl sm:text-3xl font-extrabold text-[#30D158] mt-1 tracking-tight">
-            9
+          <div className="text-2xl sm:text-3xl font-extrabold text-[#30D158] mt-1 tracking-tight tabular-nums">
+            {trailersWithFreeSpaceCount}
           </div>
           <div className="hidden sm:block text-[11px] text-white/50 mt-1">
             Disponibile grupaj
@@ -132,8 +150,8 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
             <span>LDM disponibili</span>
             <Sparkles className="hidden sm:block w-4 h-4 text-[#64D2FF]" aria-hidden="true" />
           </div>
-          <div className="text-2xl sm:text-3xl font-extrabold text-white mt-1 tracking-tight">
-            42
+          <div className="text-2xl sm:text-3xl font-extrabold text-white mt-1 tracking-tight tabular-nums">
+            {Math.round(totalFreeLdm)}
           </div>
           <div className="hidden sm:block text-[11px] text-[#64D2FF] mt-1">
             {totalFreeLdm.toFixed(1)} LDM pe coridor
@@ -148,8 +166,8 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
             <span>Curând libere</span>
             <Clock className="hidden sm:block w-4 h-4 text-[#64D2FF]" aria-hidden="true" />
           </div>
-          <div className="text-2xl sm:text-3xl font-extrabold text-[#64D2FF] mt-1 tracking-tight">
-            8
+          <div className="text-2xl sm:text-3xl font-extrabold text-[#64D2FF] mt-1 tracking-tight tabular-nums">
+            {soonFreeTrailersCount}
           </div>
           <div className="hidden sm:block text-[11px] text-white/50 mt-1">
             În 24–48h
@@ -183,18 +201,46 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
             <span>Alerte urgente</span>
             <AlertTriangle className="hidden sm:block w-4 h-4 text-[#FF9F0A]" aria-hidden="true" />
           </div>
-          <div className="text-2xl sm:text-3xl font-extrabold text-[#FF9F0A] mt-1 tracking-tight">
-            3
+          <div className="text-2xl sm:text-3xl font-extrabold text-[#FF9F0A] mt-1 tracking-tight tabular-nums">
+            {urgentAlertsCount}
           </div>
           <div className="hidden sm:block text-[11px] text-white/55 mt-1">
-            Soft-Lock & Swap
+            {pendingProposals.length} oferte · {pendingSwapsCount} swap
           </div>
         </div>
       </div>
 
-      {/* Real Interactive Europe GPS Map + Synchronized Active / Past Planning Trips */}
+      {/* Live Cargo Track GPS Sync Bar + Real Interactive Europe Map */}
+      {onSyncCargoTrack && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+          <div className="text-[11px] text-white/60 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#30D158] animate-pulse" />
+            <span>
+              Telemetrie GPS &amp; Tahograf G2V2{' '}
+              {lastCargoTrackSyncAt
+                ? `· Ultim sync: ${new Date(lastCargoTrackSyncAt).toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+                : '· Flux live pregătit'}
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={isSyncingCargoTrack}
+            onClick={onSyncCargoTrack}
+            className="px-3.5 py-1.5 rounded-full text-[11px] font-bold bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/40 hover:bg-[#0A84FF]/30 inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCargoTrack ? 'animate-spin' : ''}`} />
+            <span>{isSyncingCargoTrack ? 'Se sincronizează GPS...' : 'Sync GPS Cargo Track'}</span>
+          </button>
+        </div>
+      )}
+
       <EuropeLiveMap
         trailers={trailers}
+        liveFleetPositions={trailers.map((t) => ({
+          plate: t.tractorId.split(' (')[0],
+          place: `${t.currentLocation.city} (${t.currentLocation.country})`,
+          coords: [t.currentLocation.lat, t.currentLocation.lng] as [number, number],
+        }))}
         activeTrips={activeTrips}
         pastTrips={pastTrips}
         tripScopeFilter={tripScopeFilter}
@@ -467,20 +513,20 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
                 <div className="grid grid-cols-3 gap-2 py-2 border-y border-white/10">
                   <div>
                     <div className="text-[11px] text-white/55">Preț oferit</div>
-                    <div className="text-xl sm:text-2xl font-extrabold text-white tracking-tight mt-0.5">
-                      {pendingProposals[0].offeredPriceEur} €
+                    <div className="text-xl sm:text-2xl font-extrabold text-white tracking-tight mt-0.5 whitespace-nowrap">
+                      {pendingProposals[0].offeredPriceEur}&#160;€
                     </div>
                   </div>
                   <div>
                     <div className="text-[11px] text-white/55">Cost suplimentar</div>
-                    <div className="text-xl sm:text-2xl font-extrabold text-white/90 tracking-tight mt-0.5">
-                      {pendingProposals[0].incrementalCostEur} €
+                    <div className="text-xl sm:text-2xl font-extrabold text-white/90 tracking-tight mt-0.5 whitespace-nowrap">
+                      {pendingProposals[0].incrementalCostEur}&#160;€
                     </div>
                   </div>
                   <div>
                     <div className="text-[11px] text-white/55">Contribuție est.</div>
-                    <div className="text-xl sm:text-2xl font-extrabold text-[#30D158] tracking-tight mt-0.5">
-                      {pendingProposals[0].estimatedContributionEur} €
+                    <div className="text-xl sm:text-2xl font-extrabold text-[#30D158] tracking-tight mt-0.5 whitespace-nowrap">
+                      {pendingProposals[0].estimatedContributionEur}&#160;€
                     </div>
                   </div>
                 </div>
@@ -549,11 +595,11 @@ export const ControlCenterView: React.FC<ControlCenterViewProps> = ({
                       {m.pickupCity} → {m.deliveryCity} ({m.ldmRequired} LDM)
                     </div>
                   </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-sm font-extrabold text-[#30D158]">
-                      +{m.netContributionEur} €
+                  <div className="text-right shrink-0 whitespace-nowrap">
+                    <div className="text-sm font-extrabold text-[#30D158] whitespace-nowrap">
+                      +{m.netContributionEur}&#160;€
                     </div>
-                    <div className="text-[11px] text-white/50">+{m.detourKm} km</div>
+                    <div className="text-[11px] text-white/50">+{m.detourKm}&#160;km</div>
                   </div>
                 </div>
               ))}

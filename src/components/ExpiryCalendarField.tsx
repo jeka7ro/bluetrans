@@ -7,26 +7,17 @@ import {
   Clock,
   X,
 } from 'lucide-react';
+import { Temporal as TemporalPolyfill } from 'temporal-polyfill';
 
-// Dynamically load temporal-polyfill in browsers without native Temporal (e.g. Safari)
-let temporalPolyfillPromise: Promise<void> | null = null;
+// Ensure Temporal is available in browsers without native Temporal (e.g. Safari)
 const listeners = new Set<() => void>();
 
 export function ensureTemporalPolyfill(): void {
-  if (typeof window === 'undefined') return;
   if (typeof (globalThis as Record<string, unknown>).Temporal !== 'undefined') {
     return;
   }
-  if (!temporalPolyfillPromise) {
-    temporalPolyfillPromise = import('temporal-polyfill')
-      .then((mod) => {
-        (globalThis as Record<string, unknown>).Temporal = mod.Temporal;
-        listeners.forEach((fn) => fn());
-      })
-      .catch(() => {
-        // Fallback Gregorian calendar math remains active if offline
-      });
-  }
+  (globalThis as Record<string, unknown>).Temporal = TemporalPolyfill;
+  listeners.forEach((fn) => fn());
 }
 
 interface PlainYmd {

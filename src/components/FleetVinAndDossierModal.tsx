@@ -20,13 +20,33 @@ import {
   Edit3,
   Layers,
   X,
-  LayoutGrid,
-  List as ListIcon,
 } from 'lucide-react';
 import { TrailerUnit } from '../data/mockData';
 import { ExtendedFleetTechRecord } from './TmsOperationsView';
 import { EuroRoPlate } from './EuroRoPlate';
+import {
+  BulkActionBar,
+  BulkCheckbox,
+  BulkDeleteConfirmModal,
+  CheckboxTh,
+  ExportExcelButton,
+  ListPaginationBar,
+  SortableTh,
+  TAHOE_CELL_BORDER_STYLE,
+  TAHOE_TABLE_SCROLL_CLASS,
+  TAHOE_TABLE_STYLE,
+  TAHOE_TABLE_WRAPPER_CLASS,
+  ViewModeToggle,
+  getTahoeRowStyle,
+  paginateItems,
+  toggleSortState,
+  usePersistedPageSize,
+  usePersistedViewMode,
+  useTableSelection,
+  type SortState,
+} from './ListViewControls';
 import { TruckShowroom3D, ShowroomVehicleKind } from './TruckShowroom3D';
+import { exportRowsToExcel } from '../utils/exportExcel';
 import { VehiclePdfViewerModal } from './VehiclePdfViewerModal';
 import {
   ExpiryCalendarField,
@@ -6340,41 +6360,81 @@ export const getRealFleet = (): {
 type FleetDocType = 'RCA' | 'CASCO' | 'CMR' | 'LEASING';
 
 const MASINILE_MELE_STORAGE_KEY = 'bluetrans_masinile_mele_v6';
+const MASINILE_MELE_DELETED_STORAGE_KEY = 'bluetrans_masinile_mele_deleted_v1';
 const FLEET_ITEMS_SYNC_EVENT = 'bluetrans:fleet-items-updated';
+
+function loadDeletedFleetPlates(): Set<string> {
+  try {
+    const raw =
+      typeof window !== 'undefined'
+        ? localStorage.getItem(MASINILE_MELE_DELETED_STORAGE_KEY)
+        : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.map((p) => normalizeVehiclePlate(String(p))));
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return new Set();
+}
+
+function updateDeletedFleetPlates(plates: string[], mode: 'add' | 'remove'): void {
+  try {
+    if (typeof window === 'undefined' || plates.length === 0) return;
+    const next = loadDeletedFleetPlates();
+    for (const plate of plates) {
+      const norm = normalizeVehiclePlate(plate);
+      if (!norm) continue;
+      if (mode === 'add') next.add(norm);
+      else next.delete(norm);
+    }
+    localStorage.setItem(MASINILE_MELE_DELETED_STORAGE_KEY, JSON.stringify(Array.from(next)));
+  } catch {
+    // ignore
+  }
+}
 
 export function loadPersistedFleetItems(): MasinileMeleItem[] {
   try {
+    const deletedPlates = loadDeletedFleetPlates();
     const raw =
       typeof window !== 'undefined'
         ? localStorage.getItem(MASINILE_MELE_STORAGE_KEY)
         : null;
     if (raw) {
       const parsed = JSON.parse(raw) as MasinileMeleItem[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         const canonicalByPlate = new Map(
           INITIAL_MASINILE_MELE.map((v) => [normalizeVehiclePlate(v.plate), v])
         );
-        const merged = parsed.map((savedItem) => {
-          const canon = canonicalByPlate.get(normalizeVehiclePlate(savedItem.plate));
-          if (!canon) return savedItem;
-          return {
-            ...savedItem,
-            brand: canon.brand,
-            model: canon.model,
-            year: canon.year,
-            kind: canon.kind,
-            vin: canon.vin,
-            colorHex: canon.colorHex,
-            colorName: canon.colorName,
-            companyName: canon.companyName,
-            fleetStatus: canon.fleetStatus,
-            linkedTrailerId: canon.linkedTrailerId,
-          };
-        });
+        const merged = parsed
+          .filter((savedItem) => !deletedPlates.has(normalizeVehiclePlate(savedItem.plate)))
+          .map((savedItem) => {
+            const canon = canonicalByPlate.get(normalizeVehiclePlate(savedItem.plate));
+            if (!canon) return savedItem;
+            return {
+              ...savedItem,
+              brand: canon.brand,
+              model: canon.model,
+              year: canon.year,
+              kind: canon.kind,
+              vin: canon.vin,
+              colorHex: canon.colorHex,
+              colorName: canon.colorName,
+              // Păstrează modificările făcute de utilizator (inclusiv Editare în masă)
+              companyName: savedItem.companyName || canon.companyName,
+              fleetStatus: savedItem.fleetStatus || canon.fleetStatus,
+              linkedTrailerId: canon.linkedTrailerId,
+            };
+          });
         const seen = new Set(merged.map((v) => normalizeVehiclePlate(v.plate)));
-        const missing = INITIAL_MASINILE_MELE.filter(
-          (v) => !seen.has(normalizeVehiclePlate(v.plate))
-        );
+        const missing = INITIAL_MASINILE_MELE.filter((v) => {
+          const norm = normalizeVehiclePlate(v.plate);
+          return !seen.has(norm) && !deletedPlates.has(norm);
+        });
         return missing.length > 0 ? [...merged, ...missing] : merged;
       }
     }
@@ -6718,36 +6778,31 @@ export const MasinileMeleFleetBoard: React.FC<{
   }, [externalFilter?.nonce]);
 
   // Mod de afișare: Carduri / Listă (tabel clasic macOS Tahoe) + rânduri pe pagină
-  type ListSortKey = 'default' | 'plate' | 'kind' | 'year' | 'rca' | 'casco' | 'cmr';
-  const [viewMode, setViewMode] = useState<'cards' | 'list'>(() => {
-    try {
-      return localStorage.getItem('bluetrans_fleet_view_v1') === 'list' ? 'list' : 'cards';
-    } catch {
-      return 'cards';
-    }
-  });
-  const [pageSize, setPageSize] = useState<number>(() => {
-    try {
-      const v = Number(localStorage.getItem('bluetrans_fleet_pagesize_v1'));
-      return [0, 10, 25, 50].includes(v) ? v : 25;
-    } catch {
-      return 25;
-    }
-  });
-  const [page, setPage] = useState(0);
-  const [listSort, setListSort] = useState<{ key: ListSortKey; dir: 'asc' | 'desc' }>({
-    key: 'default',
-    dir: 'asc',
-  });
+  type ListSortKey = 'plate' | 'kind' | 'year' | 'rca' | 'casco' | 'cmr';
+  const [viewMode, setViewMode] = usePersistedViewMode(
+    'bluetrans_fleet_view_v1',
+    'cards'
+  );
+  const [pageSize, setPageSize] = usePersistedPageSize(
+    'bluetrans_fleet_pagesize_v1',
+    25
+  );
+  const [page, setPage] = useState(1);
+  const [listSort, setListSort] = useState<SortState<ListSortKey> | null>(null);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('bluetrans_fleet_view_v1', viewMode);
-      localStorage.setItem('bluetrans_fleet_pagesize_v1', String(pageSize));
-    } catch {
-      // ignore
-    }
-  }, [viewMode, pageSize]);
+  // Acțiuni în masă Flotă (Bulk Select + Bulk Edit + Bulk Delete)
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
+  const [bulkCompanyName, setBulkCompanyName] = useState<
+    'KEEP' | 'BLUE TRANS SPEDITION' | 'SCANDEXPRES'
+  >('KEEP');
+  const [bulkFleetStatus, setBulkFleetStatus] = useState<
+    'KEEP' | 'ACTIV' | 'VANDUTA' | 'ARHIVA'
+  >('KEEP');
+  const [bulkDocType, setBulkDocType] = useState<
+    'NONE' | 'RCA' | 'CASCO' | 'CMR' | 'LEASING'
+  >('NONE');
+  const [bulkDocIso, setBulkDocIso] = useState('');
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
 
   // Add New Vehicle Sidebar State
   const [newPlateInput, setNewPlateInput] = useState('');
@@ -6834,6 +6889,7 @@ export const MasinileMeleFleetBoard: React.FC<{
         : '10.11.2027',
     };
 
+    updateDeletedFleetPlates([cleanPlate], 'remove');
     setItems((prev) => [newItem, ...prev]);
     setNewPlateInput('');
     setNewVinInput('');
@@ -6932,142 +6988,282 @@ export const MasinileMeleFleetBoard: React.FC<{
   };
 
   useEffect(() => {
-    setPage(0);
+    setPage(1);
   }, [searchQuery, filterKind, sortBy, pageSize, listSort, viewMode]);
 
-  const toggleListSort = (key: ListSortKey) => {
-    setListSort((prev) =>
-      prev.key === key
-        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
-        : { key, dir: 'asc' }
+  const sortFleetValue = (item: MasinileMeleItem, key: ListSortKey): string | number => {
+    switch (key) {
+      case 'plate':
+        return item.plate;
+      case 'kind':
+        return item.kind;
+      case 'year':
+        return decodeVinNumber(item.vin).modelYear || item.year;
+      case 'rca':
+        return getFleetCellInfo(item, 'RCA').days ?? 999999;
+      case 'casco':
+        return getFleetCellInfo(item, 'CASCO').days ?? 999999;
+      case 'cmr':
+        return getFleetCellInfo(item, 'CMR').days ?? 999999;
+    }
+  };
+
+  const sortedFleetRows = !listSort
+    ? filteredItems
+    : [...filteredItems].sort((a, b) => {
+        const va = sortFleetValue(a, listSort.key);
+        const vb = sortFleetValue(b, listSort.key);
+        const cmp =
+          typeof va === 'number' && typeof vb === 'number'
+            ? va - vb
+            : String(va).localeCompare(String(vb), 'ro', { numeric: true });
+        return listSort.dir === 'asc' ? cmp : -cmp;
+      });
+
+  const activeFleetRows = viewMode === 'list' ? sortedFleetRows : filteredItems;
+  const {
+    total: fleetTotal,
+    totalPages: fleetPageCount,
+    safePage: fleetSafePage,
+    startIdx: fleetStartIdx,
+    endIdx: fleetEndIdx,
+    visibleItems: visibleFleetRows,
+  } = paginateItems(activeFleetRows, pageSize, page);
+
+  const fleetSelection = useTableSelection(
+    activeFleetRows.map((v) => v.id),
+    visibleFleetRows.map((v) => v.id)
+  );
+
+  const selectedFleetItems = activeFleetRows.filter((v) =>
+    fleetSelection.isSelected(v.id)
+  );
+
+  const exportFleetRows =
+    fleetSelection.selectedCount > 0 ? selectedFleetItems : activeFleetRows;
+
+  const formatFleetKindLabel = (kind: MasinileMeleItem['kind']) =>
+    kind === 'semitrailer'
+      ? 'Semiremorcă'
+      : kind === 'car'
+        ? 'Autoturism'
+        : kind === 'express'
+          ? 'Autoutilitară 3.5t'
+          : 'Cap tractor';
+
+  const handleExportFleetExcel = (rowsOverride?: MasinileMeleItem[]) => {
+    const targetRows = rowsOverride ?? activeFleetRows;
+    const res = exportRowsToExcel({
+      fileName: 'BlueTrans_Flota',
+      sheetName: 'Flota',
+      rows: targetRows,
+      columns: [
+        { header: '#', value: (_, i) => i + 1, minWidth: 5, maxWidth: 8 },
+        { header: 'Nr. Înmatriculare', value: (v) => v.plate },
+        { header: 'Categorie', value: (v) => formatFleetKindLabel(v.kind) },
+        { header: 'Marcă', value: (v) => v.brand },
+        {
+          header: 'Model',
+          value: (v) =>
+            decodeVinNumber(v.vin)
+              .modelName.replace(/\s*\((SCANDEXPRES|BLUE TRANS SPEDITION)\)/i, '')
+              .toUpperCase(),
+        },
+        {
+          header: 'An',
+          value: (v) => decodeVinNumber(v.vin).modelYear || v.year,
+          minWidth: 6,
+        },
+        { header: 'Serie Șasiu (VIN)', value: (v) => v.vin },
+        {
+          header: 'Firmă',
+          value: (v) =>
+            v.companyName === 'SCANDEXPRES' ? 'Scandexpres' : 'Blue Trans Spedition',
+        },
+        {
+          header: 'Status Flotă',
+          value: (v) =>
+            v.fleetStatus === 'VANDUTA'
+              ? 'Vândută'
+              : v.fleetStatus === 'ARHIVA'
+                ? 'Arhivă CIV'
+                : 'Activă',
+        },
+        { header: 'ITP Expiră', value: (v) => v.itpExpiryDate },
+        {
+          header: 'Rovinietă',
+          value: (v) =>
+            v.rovExpiryDate ? `${v.rovLabel} (${v.rovExpiryDate})` : v.rovLabel,
+        },
+        { header: 'Asigurător RCA', value: (v) => v.rcaInsurer || '' },
+        {
+          header: 'RCA Expiră',
+          value: (v) => getDocIsoForFleetItem(v, 'RCA') || v.rcaExpiryDate,
+        },
+        { header: 'Asigurător CASCO', value: (v) => v.cascoInsurer || 'Fără CASCO' },
+        {
+          header: 'CASCO Valabilitate',
+          value: (v) => getDocIsoForFleetItem(v, 'CASCO') || v.cascoValidity || '',
+        },
+        { header: 'Asigurare CMR', value: (v) => v.cmrPolicy || 'Fără CMR' },
+        { header: 'Licență / Copie Conformă', value: (v) => v.licentaExpiryDate },
+        { header: 'Leasing / Credit', value: (v) => v.leasingContract || '' },
+        {
+          header: 'Acte PDF Atașate',
+          value: (v) => getVehiclePdfDocs(v.plate, v.vin, pdfCatalog).length,
+        },
+      ],
+    });
+    setAddFeedback(`Export Excel generat: ${res.fileName} (${res.rowCount} vehicule).`);
+  };
+
+  const handleOpenBulkEditFleet = () => {
+    setBulkCompanyName('KEEP');
+    setBulkFleetStatus('KEEP');
+    setBulkDocType('NONE');
+    setBulkDocIso('');
+    setShowBulkEditModal(true);
+  };
+
+  const handleApplyBulkEditFleet = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (fleetSelection.selectedCount === 0) return;
+    const selectedSet = fleetSelection.selectedIds;
+    const nextItems = items.map((v) => {
+      if (!selectedSet.has(v.id)) return v;
+      let updated: MasinileMeleItem = {
+        ...v,
+        companyName:
+          bulkCompanyName !== 'KEEP' ? bulkCompanyName : v.companyName,
+        fleetStatus:
+          bulkFleetStatus !== 'KEEP' ? bulkFleetStatus : v.fleetStatus,
+      };
+      if (bulkDocType !== 'NONE') {
+        const patch: FleetUnitDocIsoUpdates =
+          bulkDocType === 'RCA'
+            ? { rcaIso: bulkDocIso }
+            : bulkDocType === 'CASCO'
+              ? { cascoIso: bulkDocIso }
+              : bulkDocType === 'CMR'
+                ? { cmrIso: bulkDocIso }
+                : { leasingIso: bulkDocIso };
+        updated = applyDocIsoUpdatesToFleetItem(updated, patch);
+      }
+      return updated;
+    });
+    setItems(nextItems);
+    savePersistedFleetItems(nextItems);
+    setAddFeedback(
+      `${fleetSelection.selectedCount} vehicule au fost actualizate în masă!`
     );
+    fleetSelection.clearSelection();
+    setShowBulkEditModal(false);
+  };
+
+  const handleConfirmBulkDeleteFleet = () => {
+    if (fleetSelection.selectedCount === 0) return;
+    const count = fleetSelection.selectedCount;
+    const selectedSet = fleetSelection.selectedIds;
+    const removedPlates = items.filter((v) => selectedSet.has(v.id)).map((v) => v.plate);
+    const nextItems = items.filter((v) => !selectedSet.has(v.id));
+    updateDeletedFleetPlates(removedPlates, 'add');
+    setItems(nextItems);
+    savePersistedFleetItems(nextItems);
+    fleetSelection.clearSelection();
+    setShowBulkDeleteModal(false);
+    setAddFeedback(`${count} vehicule au fost eliminate din evidența flotei.`);
   };
 
   const renderListView = () => {
-    const sortValue = (item: MasinileMeleItem, key: ListSortKey): string | number => {
-      switch (key) {
-        case 'plate':
-          return item.plate;
-        case 'kind':
-          return item.kind;
-        case 'year':
-          return item.year;
-        case 'rca':
-          return getFleetCellInfo(item, 'RCA').days ?? 999999;
-        case 'casco':
-          return getFleetCellInfo(item, 'CASCO').days ?? 999999;
-        case 'cmr':
-          return getFleetCellInfo(item, 'CMR').days ?? 999999;
-        default:
-          return 0;
-      }
-    };
-    const rows =
-      listSort.key === 'default'
-        ? filteredItems
-        : [...filteredItems].sort((a, b) => {
-            const va = sortValue(a, listSort.key);
-            const vb = sortValue(b, listSort.key);
-            const cmp =
-              typeof va === 'number' && typeof vb === 'number'
-                ? va - vb
-                : String(va).localeCompare(String(vb), 'ro', { numeric: true });
-            return listSort.dir === 'asc' ? cmp : -cmp;
-          });
-
-    const total = rows.length;
-    const pageCount = pageSize === 0 ? 1 : Math.max(1, Math.ceil(total / pageSize));
-    const safePage = Math.min(page, pageCount - 1);
-    const startIdx = pageSize === 0 ? 0 : safePage * pageSize;
-    const endIdx = pageSize === 0 ? total : Math.min(total, startIdx + pageSize);
-    const visible = rows.slice(startIdx, endIdx);
-
-    const headerCell = (label: string, key: ListSortKey | null, align: 'left' | 'center' = 'left') => (
-      <th
-        className="fleet-list-th px-3 py-2 font-semibold whitespace-nowrap"
-        style={{
-          textAlign: align,
-          fontSize: 12,
-          color: 'rgba(255,255,255,0.65)',
-          letterSpacing: '-0.01em',
-          position: 'sticky',
-          top: 0,
-          backgroundColor: 'rgba(15,23,42,0.92)',
-          backdropFilter: 'blur(18px) saturate(180%)',
-          borderBottom: '1px solid rgba(148,163,184,0.22)',
-        }}
-      >
-        {key ? (
+    const chip = (item: MasinileMeleItem, docType: FleetDocType) => {
+      const info = getFleetCellInfo(item, docType);
+      return (
         <button
           type="button"
-          onClick={() => toggleListSort(key)}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full cursor-pointer hover:bg-white/10 hover:text-white transition"
-          data-active={listSort.key === key ? 'true' : 'false'}
-          style={{ color: 'inherit', fontWeight: 600 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleOpenDocModal(item, docType);
+          }}
+          className="inline-block rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap cursor-pointer hover:brightness-110 transition"
+          style={{ backgroundColor: info.color, color: '#ffffff' }}
+          title={`${FLEET_DOC_TITLES[docType]}${info.sub ? ` · ${info.sub}` : ''}`}
         >
-          {label}
-          <span style={{ fontSize: 9, opacity: listSort.key === key ? 1 : 0.35 }}>
-            {listSort.key === key ? (listSort.dir === 'asc' ? '▲' : '▼') : '▲▼'}
-          </span>
+          {info.days !== null ? `${info.days} zile` : info.label}
         </button>
-      ) : (
-        label
-      )}
-    </th>
-  );
-
-  const chip = (item: MasinileMeleItem, docType: FleetDocType) => {
-    const info = getFleetCellInfo(item, docType);
-    return (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          handleOpenDocModal(item, docType);
-        }}
-        className="inline-block rounded-full px-2.5 py-0.5 text-[11px] font-bold whitespace-nowrap cursor-pointer hover:brightness-110 transition"
-        style={{ backgroundColor: info.color, color: '#ffffff' }}
-        title={`${FLEET_DOC_TITLES[docType]}${info.sub ? ` · ${info.sub}` : ''}`}
-      >
-        {info.days !== null ? `${info.days} zile` : info.label}
-      </button>
-    );
-  };
+      );
+    };
 
     return (
-      <div className="tahoe-card-inner rounded-2xl border border-white/15 overflow-hidden">
-        <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
-          <table
-            className="w-full"
-            style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: 13, fontVariantNumeric: 'tabular-nums' }}
-          >
+      <div className={TAHOE_TABLE_WRAPPER_CLASS}>
+        <div className={TAHOE_TABLE_SCROLL_CLASS}>
+          <table className="w-full text-left" style={TAHOE_TABLE_STYLE}>
             <thead>
               <tr>
-                {headerCell('#', null, 'center')}
-                {headerCell('Număr · Serie VIN', 'plate')}
-                {headerCell('Tip', 'kind')}
-                {headerCell('Marcă · Model · Companie', null)}
-                {headerCell('An', 'year')}
-                {headerCell('Acte', null, 'center')}
-                {headerCell('RCA', 'rca', 'center')}
-                {headerCell('CASCO', 'casco', 'center')}
-                {headerCell('CMR', 'cmr', 'center')}
-                {headerCell('Leasing', null, 'center')}
+                <CheckboxTh
+                  checked={fleetSelection.isAllVisibleSelected}
+                  indeterminate={fleetSelection.isSomeVisibleSelected}
+                  onChange={fleetSelection.toggleAllVisible}
+                  ariaLabel="Selectează toate vehiculele de pe pagină"
+                />
+                <SortableTh label="#" sort={null} align="center" className="w-10" />
+                <SortableTh
+                  label="Număr · Serie VIN"
+                  sortKey="plate"
+                  sort={listSort}
+                  onToggle={(k) => setListSort((p) => toggleSortState(p, k))}
+                />
+                <SortableTh
+                  label="Tip"
+                  sortKey="kind"
+                  sort={listSort}
+                  onToggle={(k) => setListSort((p) => toggleSortState(p, k))}
+                />
+                <SortableTh label="Marcă · Model · Companie" sort={null} />
+                <SortableTh
+                  label="An"
+                  sortKey="year"
+                  sort={listSort}
+                  onToggle={(k) => setListSort((p) => toggleSortState(p, k))}
+                />
+                <SortableTh label="Acte" sort={null} align="center" />
+                <SortableTh
+                  label="RCA"
+                  sortKey="rca"
+                  sort={listSort}
+                  onToggle={(k) => setListSort((p) => toggleSortState(p, k))}
+                  align="center"
+                />
+                <SortableTh
+                  label="CASCO"
+                  sortKey="casco"
+                  sort={listSort}
+                  onToggle={(k) => setListSort((p) => toggleSortState(p, k))}
+                  align="center"
+                />
+                <SortableTh
+                  label="CMR"
+                  sortKey="cmr"
+                  sort={listSort}
+                  onToggle={(k) => setListSort((p) => toggleSortState(p, k))}
+                  align="center"
+                />
+                <SortableTh label="Leasing" sort={null} align="center" />
               </tr>
             </thead>
             <tbody>
-              {visible.length === 0 && (
+              {visibleFleetRows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-white/60 text-sm">
+                  <td colSpan={11} className="px-4 py-8 text-center text-white/60 text-sm">
                     Niciun vehicul nu corespunde filtrelor.
                   </td>
                 </tr>
               )}
-              {visible.map((item, idx) => {
+              {visibleFleetRows.map((item, idx) => {
                 const modelName = decodeVinNumber(item.vin)
                   .modelName.replace(/\s*\((SCANDEXPRES|BLUE TRANS SPEDITION)\)/i, '')
                   .toUpperCase();
                 const rowPdfs = getVehiclePdfDocs(item.plate, item.vin, pdfCatalog);
+                const selected = fleetSelection.isSelected(item.id);
                 return (
                   <tr
                     key={item.id}
@@ -7079,51 +7275,52 @@ export const MasinileMeleFleetBoard: React.FC<{
                       )
                     }
                     className="cursor-pointer transition hover:bg-[#0A84FF]/10"
-                    style={{
-                      height: 48,
-                      backgroundColor: idx % 2 === 1 ? 'rgba(148,163,184,0.05)' : 'transparent',
-                    }}
+                    style={getTahoeRowStyle(idx, selected)}
                   >
-                    <td className="px-3 text-center text-white/45" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>
-                      {startIdx + idx + 1}
+                    <td className="px-1.5 text-center" style={TAHOE_CELL_BORDER_STYLE}>
+                      <BulkCheckbox
+                        checked={selected}
+                        onChange={() => fleetSelection.toggleOne(item.id)}
+                        ariaLabel={`Selectează ${item.plate}`}
+                      />
                     </td>
-                    <td className="px-3 whitespace-nowrap" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>
-                      <div className="font-bold text-white leading-tight flex items-center gap-2">
+                    <td
+                      className="px-2 text-center text-white/50 font-semibold whitespace-nowrap"
+                      style={TAHOE_CELL_BORDER_STYLE}
+                    >
+                      {fleetStartIdx + idx + 1}
+                    </td>
+                    <td className="px-2 whitespace-nowrap" style={TAHOE_CELL_BORDER_STYLE}>
+                      <div className="font-bold text-white leading-tight flex items-center gap-1.5">
                         <EuroRoPlate plate={item.plate} size="sm" />
                         {item.fleetStatus === 'VANDUTA' && (
-                          <span className="ml-2 text-[10px] font-extrabold" style={{ color: '#fca5a5' }}>
+                          <span className="ml-1 text-[10px] font-extrabold" style={{ color: '#fca5a5' }}>
                             VÂNDUTĂ
                           </span>
                         )}
                         {item.fleetStatus === 'ARHIVA' && (
-                          <span className="ml-2 text-[10px] font-extrabold text-amber-400">
+                          <span className="ml-1 text-[10px] font-extrabold text-amber-400">
                             ARHIVĂ CIV
                           </span>
                         )}
                       </div>
-                      <div className="text-[10.5px] text-white/50 leading-tight">{item.vin}</div>
+                      <div className="text-[10px] text-white/50 leading-tight">{item.vin}</div>
                     </td>
-                    <td className="px-3 text-white/80 whitespace-nowrap" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>
-                      {item.kind === 'semitrailer'
-                        ? 'Semiremorcă'
-                        : item.kind === 'car'
-                          ? 'Autoturism'
-                          : item.kind === 'express'
-                            ? 'Autoutilitară 3.5t'
-                            : 'Cap tractor'}
+                    <td className="px-2 text-white/80 whitespace-nowrap" style={TAHOE_CELL_BORDER_STYLE}>
+                      {formatFleetKindLabel(item.kind)}
                     </td>
-                    <td className="px-3 max-w-[230px]" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }} title={modelName}>
-                      <div className="truncate text-white/85 leading-tight">
+                    <td className="px-2 max-w-[165px]" style={TAHOE_CELL_BORDER_STYLE} title={`${item.brand} · ${modelName}`}>
+                      <div className="truncate text-white/85 leading-tight text-xs">
                         <span className="font-semibold text-white">{item.brand}</span> · {modelName}
                       </div>
-                      <div className="text-[10.5px] text-white/50 leading-tight">
+                      <div className="text-[10px] text-white/50 leading-tight truncate">
                         {item.companyName === 'SCANDEXPRES' ? 'Scandexpres' : 'Blue Trans Spedition'}
                       </div>
                     </td>
-                    <td className="px-3 text-white/80" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>
+                    <td className="px-2 text-white/80 whitespace-nowrap" style={TAHOE_CELL_BORDER_STYLE}>
                       {decodeVinNumber(item.vin).modelYear || item.year}
                     </td>
-                    <td className="px-3 text-center whitespace-nowrap" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>
+                    <td className="px-2 text-center whitespace-nowrap" style={TAHOE_CELL_BORDER_STYLE}>
                       <div className="inline-flex items-center gap-1">
                         <button
                           type="button"
@@ -7184,10 +7381,10 @@ export const MasinileMeleFleetBoard: React.FC<{
                         )}
                       </div>
                     </td>
-                    <td className="px-3 text-center" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>{chip(item, 'RCA')}</td>
-                    <td className="px-3 text-center" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>{chip(item, 'CASCO')}</td>
-                    <td className="px-3 text-center" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>{chip(item, 'CMR')}</td>
-                    <td className="px-3 text-center" style={{ borderBottom: '1px solid rgba(148,163,184,0.12)' }}>{chip(item, 'LEASING')}</td>
+                    <td className="px-2 text-center" style={TAHOE_CELL_BORDER_STYLE}>{chip(item, 'RCA')}</td>
+                    <td className="px-2 text-center" style={TAHOE_CELL_BORDER_STYLE}>{chip(item, 'CASCO')}</td>
+                    <td className="px-2 text-center" style={TAHOE_CELL_BORDER_STYLE}>{chip(item, 'CMR')}</td>
+                    <td className="px-2 text-center" style={TAHOE_CELL_BORDER_STYLE}>{chip(item, 'LEASING')}</td>
                   </tr>
                 );
               })}
@@ -7195,56 +7392,18 @@ export const MasinileMeleFleetBoard: React.FC<{
           </table>
         </div>
 
-        {/* Subsol: rânduri pe pagină + total + navigare */}
-        <div
-          className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 text-xs text-white/75"
-          style={{ borderTop: '1px solid rgba(148,163,184,0.22)' }}
-        >
-          <label className="flex items-center gap-2">
-            <span>Rânduri pe pagină</span>
-            <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
-              className="tahoe-card-inner rounded-full px-3 py-1 text-xs font-bold text-white border border-white/15 cursor-pointer"
-            >
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={0}>Toate</option>
-            </select>
-          </label>
-
-          <span className="tabular-nums font-semibold text-white">
-            {total === 0 ? '0' : `${startIdx + 1}–${endIdx}`} din {total}
-            {total !== items.length && (
-              <span className="text-white/55 font-normal"> (total flotă: {items.length})</span>
-            )}
-          </span>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              disabled={safePage === 0 || pageSize === 0}
-              onClick={() => setPage(Math.max(0, safePage - 1))}
-              className="px-3 py-1 rounded-full border border-white/15 font-bold text-white disabled:opacity-35 cursor-pointer disabled:cursor-default"
-              style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}
-            >
-              ‹
-            </button>
-            <span className="tabular-nums">
-              Pagina {safePage + 1} / {pageCount}
-            </span>
-            <button
-              type="button"
-              disabled={safePage >= pageCount - 1 || pageSize === 0}
-              onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))}
-              className="px-3 py-1 rounded-full border border-white/15 font-bold text-white disabled:opacity-35 cursor-pointer disabled:cursor-default"
-              style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}
-            >
-              ›
-            </button>
-          </div>
-        </div>
+        <ListPaginationBar
+          total={fleetTotal}
+          startIdx={fleetStartIdx}
+          endIdx={fleetEndIdx}
+          pageSize={pageSize}
+          onPageSizeChange={setPageSize}
+          page={fleetSafePage}
+          totalPages={fleetPageCount}
+          onPageChange={setPage}
+          unfilteredTotal={items.length}
+          unfilteredLabel="total flotă"
+        />
       </div>
     );
   };
@@ -7357,7 +7516,7 @@ export const MasinileMeleFleetBoard: React.FC<{
             </select>
           </div>
 
-          <div className="flex items-center justify-between gap-2 w-full sm:contents">
+          <div className="flex flex-wrap items-center justify-between gap-2 w-full sm:contents">
             <button
               type="button"
               onClick={() => setCompactMode((p) => !p)}
@@ -7370,34 +7529,18 @@ export const MasinileMeleFleetBoard: React.FC<{
               ▤ Compact
             </button>
 
-            {/* Comutator: Carduri / Listă (capsule pill group) */}
-            <div
-              className="inline-flex items-center gap-1 p-0.5 sm:p-1 rounded-full tahoe-card-inner border border-white/15 flex-1 sm:flex-initial justify-center"
-              role="group"
-              aria-label="Mod afișare"
-            >
-              {(
-                [
-                  { id: 'cards', label: 'Carduri', Icon: LayoutGrid },
-                  { id: 'list', label: 'Listă', Icon: ListIcon },
-                ] as const
-              ).map(({ id, label, Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setViewMode(id)}
-                  className={`flex-1 sm:flex-initial justify-center px-3 sm:px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
-                    viewMode === id
-                      ? 'bg-[#0A84FF] text-white shadow-sm'
-                      : 'text-white/75 hover:text-white'
-                  }`}
-                  aria-pressed={viewMode === id}
-                >
-                  <Icon className="w-3.5 h-3.5 shrink-0" />
-                  {label}
-                </button>
-              ))}
-            </div>
+            <ViewModeToggle
+              value={viewMode}
+              onChange={setViewMode}
+              ariaLabel="Mod afișare flotă"
+            />
+
+            <ExportExcelButton
+              onClick={() => handleExportFleetExcel(exportFleetRows)}
+              count={exportFleetRows.length}
+              disabled={exportFleetRows.length === 0}
+              className="sm:py-2"
+            />
           </div>
 
           <DemoBadge
@@ -7420,12 +7563,29 @@ export const MasinileMeleFleetBoard: React.FC<{
           </div>
         )}
 
+        <BulkActionBar
+          selectedCount={fleetSelection.selectedCount}
+          totalFilteredCount={activeFleetRows.length}
+          onSelectAllFiltered={fleetSelection.selectAllFiltered}
+          onClearSelection={fleetSelection.clearSelection}
+          onBulkExport={() => handleExportFleetExcel(selectedFleetItems)}
+          onBulkEdit={handleOpenBulkEditFleet}
+          onBulkDelete={() => setShowBulkDeleteModal(true)}
+          itemNounSingular="vehicul selectat"
+          itemNounPlural="vehicule selectate"
+        />
+
         {/* Vehicle Cards List (Exact Visual Layout from Screenshot 1) / sau Listă (tabel) */}
         {viewMode === 'list' ? (
           renderListView()
         ) : (
         <div className="space-y-3">
-          {filteredItems.map((item) => {
+          {visibleFleetRows.length === 0 && (
+            <div className="tahoe-card-inner rounded-2xl p-8 border border-white/15 text-center text-sm text-white/60">
+              Niciun vehicul nu corespunde filtrelor curente.
+            </div>
+          )}
+          {visibleFleetRows.map((item, idx) => {
             const vinDecoded = decodeVinNumber(item.vin);
             const autoColorHex = vinDecoded.oemColor.hex;
             const autoColorName = vinDecoded.oemColor.name;
@@ -7435,6 +7595,7 @@ export const MasinileMeleFleetBoard: React.FC<{
             const autoYear = vinDecoded.modelYear || item.year;
             const itemPdfDocs = getVehiclePdfDocs(item.plate, item.vin, pdfCatalog);
             const itemPlateAliases = getVehiclePlateAliases(item.plate, item.vin);
+            const selected = fleetSelection.isSelected(item.id);
 
             return (
               <div
@@ -7446,7 +7607,11 @@ export const MasinileMeleFleetBoard: React.FC<{
                     item
                   )
                 }
-                className="tahoe-card-inner rounded-2xl p-3 sm:p-3.5 border border-white/15 hover:border-[#0A84FF]/60 transition flex flex-col lg:flex-row lg:items-center justify-between gap-4 cursor-pointer group shadow-sm"
+                className={`tahoe-card-inner rounded-2xl p-3 sm:p-3.5 border transition flex flex-col lg:flex-row lg:items-center justify-between gap-4 cursor-pointer group shadow-sm ${
+                  selected
+                    ? 'border-[#0A84FF] bg-[#0A84FF]/10'
+                    : 'border-white/15 hover:border-[#0A84FF]/60'
+                }`}
               >
                 {/* Left: 3/4 Truck or Semi-Trailer Studio Thumbnail + Plate, Brand & Year */}
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 min-w-0">
@@ -7480,6 +7645,14 @@ export const MasinileMeleFleetBoard: React.FC<{
 
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
+                      <BulkCheckbox
+                        checked={selected}
+                        onChange={() => fleetSelection.toggleOne(item.id)}
+                        ariaLabel={`Selectează ${item.plate}`}
+                      />
+                      <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/75 text-[10.5px] font-bold tabular-nums">
+                        #{fleetStartIdx + idx + 1}
+                      </span>
                       <EuroRoPlate plate={item.plate} size="lg" />
                       <span className="px-2.5 py-0.5 rounded-full bg-white/8 border border-white/15 text-[10px] font-mono text-white/75">
                         VIN: {item.vin}
@@ -7597,6 +7770,20 @@ export const MasinileMeleFleetBoard: React.FC<{
               </div>
             );
           })}
+          <div className="tahoe-card-inner rounded-2xl border border-white/15 overflow-hidden">
+            <ListPaginationBar
+              total={fleetTotal}
+              startIdx={fleetStartIdx}
+              endIdx={fleetEndIdx}
+              pageSize={pageSize}
+              onPageSizeChange={setPageSize}
+              page={fleetSafePage}
+              totalPages={fleetPageCount}
+              onPageChange={setPage}
+              unfilteredTotal={items.length}
+              unfilteredLabel="total flotă"
+            />
+          </div>
         </div>
         )}
       </div>
@@ -7822,6 +8009,147 @@ export const MasinileMeleFleetBoard: React.FC<{
           onClose={() => setPdfModalTarget(null)}
         />
       )}
+
+      {showBulkEditModal && (
+        <div
+          onClick={() => setShowBulkEditModal(false)}
+          className="modal-backdrop-lock fixed inset-0 z-[2100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-edit-fleet-title"
+            onSubmit={handleApplyBulkEditFleet}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-[26px] tahoe-glass border border-white/15 p-5 sm:p-6 shadow-2xl space-y-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 id="bulk-edit-fleet-title" className="text-base font-extrabold text-white">
+                  Editare în masă — Flotă ({fleetSelection.selectedCount} vehicule)
+                </h3>
+                <p className="text-xs text-white/60 mt-0.5">
+                  Câmpurile lăsate pe „Fără modificare” rămân neschimbate.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBulkEditModal(false)}
+                aria-label="Închide"
+                className="w-8 h-8 rounded-full tahoe-btn-secondary flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Firmă deținătoare
+                </label>
+                <select
+                  aria-label="Firmă deținătoare în masă"
+                  value={bulkCompanyName}
+                  onChange={(e) =>
+                    setBulkCompanyName(
+                      e.target.value as 'KEEP' | 'BLUE TRANS SPEDITION' | 'SCANDEXPRES'
+                    )
+                  }
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                >
+                  <option value="KEEP">Fără modificare</option>
+                  <option value="BLUE TRANS SPEDITION">Blue Trans Spedition</option>
+                  <option value="SCANDEXPRES">Scandexpres</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Status Flotă
+                </label>
+                <select
+                  aria-label="Status flotă în masă"
+                  value={bulkFleetStatus}
+                  onChange={(e) =>
+                    setBulkFleetStatus(
+                      e.target.value as
+                        | 'KEEP'
+                        | 'ACTIV'
+                        | 'VANDUTA'
+                        | 'ARHIVA'
+                    )
+                  }
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                >
+                  <option value="KEEP">Fără modificare</option>
+                  <option value="ACTIV">Activă</option>
+                  <option value="VANDUTA">Vândută</option>
+                  <option value="ARHIVA">Arhivă CIV</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Actualizează poliță / termen
+                </label>
+                <select
+                  aria-label="Tip poliță de actualizat în masă"
+                  value={bulkDocType}
+                  onChange={(e) =>
+                    setBulkDocType(
+                      e.target.value as 'NONE' | 'RCA' | 'CASCO' | 'CMR' | 'LEASING'
+                    )
+                  }
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                >
+                  <option value="NONE">Nu modifica polițele</option>
+                  <option value="RCA">Expirare RCA</option>
+                  <option value="CASCO">Expirare CASCO</option>
+                  <option value="CMR">Expirare CMR</option>
+                  <option value="LEASING">Expirare Leasing</option>
+                </select>
+              </div>
+
+              {bulkDocType !== 'NONE' && (
+                <div>
+                  <ExpiryCalendarField
+                    label={`Dată expirare ${bulkDocType}`}
+                    name={`bulk-doc-${bulkDocType.toLowerCase()}`}
+                    isoValue={bulkDocIso}
+                    onChangeIso={setBulkDocIso}
+                    allowClear
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowBulkEditModal(false)}
+                className="px-4 py-2 rounded-full tahoe-btn-secondary text-xs font-bold text-white cursor-pointer"
+              >
+                Anulează
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white text-xs font-extrabold cursor-pointer"
+              >
+                Aplică la {fleetSelection.selectedCount} vehicule
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <BulkDeleteConfirmModal
+        open={showBulkDeleteModal}
+        title="Ștergere în masă — Flotă"
+        count={fleetSelection.selectedCount}
+        previewLabels={selectedFleetItems.map((v) => `${v.plate} · ${v.brand} (${v.vin})`)}
+        onCancel={() => setShowBulkDeleteModal(false)}
+        onConfirm={handleConfirmBulkDeleteFleet}
+      />
     </div>
   );
 };

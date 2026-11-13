@@ -6,6 +6,7 @@ import {
   Calculator,
   Search,
   Printer,
+  FileCheck2,
   Receipt,
   LocateFixed,
   Loader2,
@@ -14,8 +15,31 @@ import {
   Clock,
   Radio,
   X,
+  Eye,
 } from 'lucide-react';
+import {
+  BulkActionBar,
+  BulkCheckbox,
+  BulkDeleteConfirmModal,
+  CheckboxTh,
+  ExportExcelButton,
+  ListPaginationBar,
+  SortableTh,
+  TAHOE_CELL_BORDER_STYLE,
+  TAHOE_TABLE_SCROLL_CLASS,
+  TAHOE_TABLE_STYLE,
+  TAHOE_TABLE_WRAPPER_CLASS,
+  ViewModeToggle,
+  getTahoeRowStyle,
+  paginateItems,
+  toggleSortState,
+  usePersistedPageSize,
+  usePersistedViewMode,
+  useTableSelection,
+  type SortState,
+} from './ListViewControls';
 import { CargoOrder, TrailerUnit, formatCountryBadge } from '../data/mockData';
+import { exportRowsToExcel } from '../utils/exportExcel';
 import {
   GoogleMapsAddressInput,
   detectCurrentUserGpsPlace,
@@ -31,6 +55,11 @@ import {
   HOUR_SLOTS,
 } from './Planning7DaysView';
 import { getRealFleet } from './FleetVinAndDossierModal';
+import {
+  buildGoogleMapsDirectionsUrl,
+  computeHgvRouteMetrics,
+  resolveHgvVehicleProfile,
+} from '../utils/googleMapsLinks';
 import {
   findFirstFuturePlanningSlot,
   formatPlanningOrderPosition,
@@ -144,6 +173,7 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
   unassignedOrders,
   trailers,
   activeLoads,
+  setActiveLoads,
   onCreateOrder,
   onAssignOrderToTrailer,
   focusAllocationNonce,
@@ -202,17 +232,53 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
   }, [focusAllocationNonce]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [ordersViewMode, setOrdersViewMode] = usePersistedViewMode(
+    'bluetrans_orders_view_v1',
+    'list'
+  );
+  const [ordersPageSize, setOrdersPageSize] = usePersistedPageSize(
+    'bluetrans_orders_pagesize_v1',
+    10
+  );
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [orderSort, setOrderSort] = useState<
+    SortState<'id' | 'client' | 'route' | 'ldm' | 'trailer' | 'revenue' | 'status'> | null
+  >(null);
+  const [viewingOrder, setViewingOrder] = useState<ActiveLoadItem | null>(null);
   const [showNewOrderModal, setShowNewOrderModal] = useState<boolean>(false);
   const [printableDoc, setPrintableDoc] =
     useState<PrintableTripDocData | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Acțiuni în masă — Comenzi & curse
+  const [showBulkEditOrders, setShowBulkEditOrders] = useState(false);
+  const [bulkOrderStatus, setBulkOrderStatus] = useState<
+    'KEEP' | ActiveLoadItem['status']
+  >('KEEP');
+  const [bulkOrderCmrStatus, setBulkOrderCmrStatus] = useState<
+    'KEEP' | ActiveLoadItem['cmrStatus']
+  >('KEEP');
+  const [bulkOrderTrailerId, setBulkOrderTrailerId] = useState('');
+  const [bulkOrderTemp, setBulkOrderTemp] = useState('');
+  const [showBulkDeleteOrders, setShowBulkDeleteOrders] = useState(false);
+
   const realFleet = React.useMemo(() => getRealFleet(), []);
   const idleTrailers = realFleet.trailers.filter(
     (v) => !trailers.some((t) => t.id === v.plate)
   );
 
   useEffect(() => {
-    if (showNewOrderModal) {
+    setOrdersPage(1);
+  }, [statusFilter, searchQuery, ordersPageSize, orderSort]);
+
+  useEffect(() => {
+    if (
+      showNewOrderModal ||
+      viewingOrder ||
+      printableDoc ||
+      showBulkEditOrders ||
+      showBulkDeleteOrders
+    ) {
       document.body.classList.add('modal-scroll-locked');
       document.body.style.overflow = 'hidden';
     } else {
@@ -223,7 +289,13 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
       document.body.classList.remove('modal-scroll-locked');
       document.body.style.overflow = '';
     };
-  }, [showNewOrderModal]);
+  }, [
+    showNewOrderModal,
+    viewingOrder,
+    printableDoc,
+    showBulkEditOrders,
+    showBulkDeleteOrders,
+  ]);
 
   // 3-Step Trip Creation Wizard State (matching Image 4 bottom panel: 1 Detalii -> 2 Alocare -> 3 Confirmare)
   const [roClock, setRoClock] = useState(() =>
@@ -347,7 +419,10 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
       autoRouteDistanceLabel.split(' km')[0].replace(/\./g, ''),
       10
     ) || 850;
-  const autoDriveHours = +(autoRoadKmNumeric / 72).toFixed(1);
+  const autoHgvMetrics = computeHgvRouteMetrics(autoRoadKmNumeric, {
+    isHgv: true,
+  });
+  const autoDriveHours = autoHgvMetrics.pureDriveHours;
   const currentLdmNum = Math.min(13.6, Math.max(0.4, safeParse(newLdm, 3.6)));
   const ldmShareRatio = Math.max(0.22, currentLdmNum / 13.6);
   const autoEstimatedDirectCostEur = Math.round(
@@ -490,6 +565,124 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
     return matchesStatus && matchesSearch;
   });
 
+  const sortedLoads = [...filteredLoads].sort((a, b) => {
+    if (!orderSort) return 0;
+    let cmp = 0;
+    switch (orderSort.key) {
+      case 'id':
+        cmp = a.id.localeCompare(b.id, 'ro');
+        break;
+      case 'client':
+        cmp = a.client.localeCompare(b.client, 'ro');
+        break;
+      case 'route':
+        cmp = a.route.localeCompare(b.route, 'ro');
+        break;
+      case 'ldm':
+        cmp = a.ldm - b.ldm;
+        break;
+      case 'trailer':
+        cmp = a.trailerId.localeCompare(b.trailerId, 'ro');
+        break;
+      case 'revenue':
+        cmp = a.revenueEur - b.revenueEur;
+        break;
+      case 'status':
+        cmp = a.status.localeCompare(b.status, 'ro');
+        break;
+    }
+    return orderSort.dir === 'asc' ? cmp : -cmp;
+  });
+
+  const {
+    total: ordersTotal,
+    totalPages: ordersPageCount,
+    safePage: ordersSafePage,
+    startIdx: ordersStartIdx,
+    endIdx: ordersEndIdx,
+    visibleItems: visibleLoads,
+  } = paginateItems(sortedLoads, ordersPageSize, ordersPage);
+
+  const ordersSelection = useTableSelection(
+    sortedLoads.map((l) => l.id),
+    visibleLoads.map((l) => l.id)
+  );
+  const selectedOrderItems = sortedLoads.filter((l) =>
+    ordersSelection.isSelected(l.id)
+  );
+
+  const handleApplyBulkEditOrders = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (ordersSelection.selectedCount === 0) return;
+    const selectedSet = ordersSelection.selectedIds;
+    setActiveLoads((prev) =>
+      prev.map((load) => {
+        if (!selectedSet.has(load.id)) return load;
+        return {
+          ...load,
+          status: bulkOrderStatus !== 'KEEP' ? bulkOrderStatus : load.status,
+          cmrStatus:
+            bulkOrderCmrStatus !== 'KEEP' ? bulkOrderCmrStatus : load.cmrStatus,
+          trailerId: bulkOrderTrailerId || load.trailerId,
+          temp: bulkOrderTemp.trim() ? bulkOrderTemp.trim() : load.temp,
+        };
+      })
+    );
+    setToast(
+      `${ordersSelection.selectedCount} curse/comenzi au fost actualizate în masă!`
+    );
+    ordersSelection.clearSelection();
+    setShowBulkEditOrders(false);
+  };
+
+  const handleConfirmBulkDeleteOrders = () => {
+    if (ordersSelection.selectedCount === 0) return;
+    const count = ordersSelection.selectedCount;
+    const selectedSet = ordersSelection.selectedIds;
+    setActiveLoads((prev) => prev.filter((load) => !selectedSet.has(load.id)));
+    ordersSelection.clearSelection();
+    setShowBulkDeleteOrders(false);
+    setToast(`${count} curse/comenzi au fost eliminate din registrul activ.`);
+  };
+
+  const handleExportOrdersExcel = (rowsOverride?: ActiveLoadItem[]) => {
+    const targetRows = Array.isArray(rowsOverride) ? rowsOverride : sortedLoads;
+    const res = exportRowsToExcel({
+      fileName: 'BlueTrans_Curse',
+      sheetName: 'Curse si Comenzi',
+      rows: targetRows,
+      columns: [
+        { header: '#', value: (_, i) => i + 1, minWidth: 5, maxWidth: 8 },
+        { header: 'Nr. Comandă / Cursă', value: (l) => l.id },
+        { header: 'Client', value: (l) => l.client },
+        { header: 'Rută', value: (l) => l.route },
+        { header: 'Descriere Marfă', value: (l) => l.cargoDesc },
+        { header: 'LDM', value: (l) => l.ldm },
+        { header: 'Tonaj (t)', value: (l) => l.weightTons },
+        { header: 'Regim Temperatură', value: (l) => l.temp },
+        {
+          header: 'Cap Tractor',
+          value: (l) => {
+            const tr = trailers.find((t) => t.id === l.trailerId);
+            return tr ? tr.tractorId.split(' (')[0] : '';
+          },
+        },
+        { header: 'Semiremorcă', value: (l) => l.trailerId },
+        {
+          header: 'Șofer Alocat',
+          value: (l) => {
+            const tr = trailers.find((t) => t.id === l.trailerId);
+            return tr?.driver1.name || '';
+          },
+        },
+        { header: 'Status CMR', value: (l) => l.cmrStatus },
+        { header: 'Tarif (EUR)', value: (l) => l.revenueEur },
+        { header: 'Status Cursă', value: (l) => l.status },
+      ],
+    });
+    setToast(`Export Excel generat: ${res.fileName} (${res.rowCount} curse).`);
+  };
+
   const wizardOrder =
     unassignedOrders.find((o) => o.id === selectedOrderForTrip) ||
     unassignedOrders[0];
@@ -591,8 +784,8 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
             ))}
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-72">
-            <div className="relative flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 min-w-[160px] sm:w-56 sm:flex-initial">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
@@ -602,6 +795,19 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
                 className="w-full bg-[#0b101d] border border-slate-800 rounded-full pl-9 pr-3.5 py-2 sm:py-1.5 text-xs text-white"
               />
             </div>
+
+            <ViewModeToggle
+              value={ordersViewMode}
+              onChange={setOrdersViewMode}
+              ariaLabel="Mod afișare comenzi"
+            />
+
+            <ExportExcelButton
+              onClick={() => handleExportOrdersExcel(sortedLoads)}
+              count={sortedLoads.length}
+              disabled={sortedLoads.length === 0}
+            />
+
             <button
               type="button"
               onClick={() => setShowNewOrderModal(true)}
@@ -613,190 +819,124 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
           </div>
         </div>
 
-        {/* Mobile Order Cards (`< md`) — zero clipping on phones while Desktop `<table>` stays untouched */}
-        <div className="md:hidden space-y-3">
-          {filteredLoads.map((load) => {
-            const trObj = trailers.find((t) => t.id === load.trailerId) || trailers[0];
-            const trPlate = trObj ? trObj.tractorId.split(' (')[0] : '';
-            const isTwo = Boolean(trPlate && trPlate !== load.trailerId);
-            const [fromPart, toPart] = load.route.split(' → ');
-            return (
-              <div
-                key={load.id}
-                className="tahoe-card-inner rounded-2xl p-3.5 border border-white/15 space-y-2.5"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="tabular-nums font-extrabold text-xs text-indigo-300">
-                      {load.id}
-                    </span>
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${
-                        load.status === 'În tranzit'
-                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                          : load.status === 'Planificată'
-                            ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
-                            : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                      }`}
-                    >
-                      {load.status}
-                    </span>
-                  </div>
-                  <span className="tabular-nums font-extrabold text-sm text-emerald-400 shrink-0">
-                    {load.revenueEur} €
-                  </span>
-                </div>
+        <BulkActionBar
+          selectedCount={ordersSelection.selectedCount}
+          totalFilteredCount={sortedLoads.length}
+          onSelectAllFiltered={ordersSelection.selectAllFiltered}
+          onClearSelection={ordersSelection.clearSelection}
+          onBulkExport={() => handleExportOrdersExcel(selectedOrderItems)}
+          onBulkEdit={() => {
+            setBulkOrderStatus('KEEP');
+            setBulkOrderCmrStatus('KEEP');
+            setBulkOrderTrailerId('');
+            setBulkOrderTemp('');
+            setShowBulkEditOrders(true);
+          }}
+          onBulkDelete={() => setShowBulkDeleteOrders(true)}
+          itemNounSingular="cursă selectată"
+          itemNounPlural="curse selectate"
+        />
 
-                <div>
-                  <div className="font-bold text-sm text-white leading-snug">
-                    {load.client}
-                  </div>
-                  <div className="text-xs text-slate-300 mt-0.5 font-medium">
-                    {load.route}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold tabular-nums">
-                    {load.ldm.toFixed(1)} LDM · {load.weightTons}t
-                  </span>
-                  <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-bold tabular-nums">
-                    {load.temp}
-                  </span>
-                  <span className="text-white/60 text-[10.5px]">{load.cargoDesc}</span>
-                </div>
-
-                <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1">
-                    {isTwo && (
-                      <>
-                        {renderEuroRoPlate(trPlate)}
-                        <span className="font-black text-white/75 text-[10px]">+</span>
-                      </>
-                    )}
-                    {renderEuroRoPlate(load.trailerId)}
-                  </span>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPrintableDoc({
-                          docType: 'CMR',
-                          referenceNo: load.id,
-                          clientName: load.client,
-                          fromCity: fromPart || 'Oradea',
-                          toCity: toPart || 'Rotterdam',
-                          cargoDesc: load.cargoDesc,
-                          ldm: load.ldm,
-                          weightTons: load.weightTons,
-                          tempRegime: load.temp,
-                          tractorPlate: trPlate,
-                          trailerPlate: trObj.id,
-                          driverName: trObj.driver1.name,
-                          revenueEur: load.revenueEur,
-                        })
-                      }
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 border border-[#0A84FF]/35 text-[#64D2FF] font-bold text-[11px] cursor-pointer"
-                    >
-                      <Printer className="w-3 h-3" aria-hidden="true" />
-                      <span>CMR</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPrintableDoc({
-                          docType: 'INVOICE',
-                          referenceNo: load.id.replace('LD-', '44'),
-                          clientName: load.client,
-                          fromCity: fromPart || 'Oradea',
-                          toCity: toPart || 'Rotterdam',
-                          cargoDesc: load.cargoDesc,
-                          ldm: load.ldm,
-                          weightTons: load.weightTons,
-                          tempRegime: load.temp,
-                          tractorPlate: trPlate,
-                          trailerPlate: trObj.id,
-                          driverName: trObj.driver1.name,
-                          revenueEur: load.revenueEur,
-                        })
-                      }
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#30D158]/15 hover:bg-[#30D158]/25 border border-[#30D158]/35 text-[#30D158] font-bold text-[11px] cursor-pointer"
-                    >
-                      <Receipt className="w-3 h-3" aria-hidden="true" />
-                      <span>Factură</span>
-                    </button>
-                  </div>
-                </div>
+        {ordersViewMode === 'cards' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {visibleLoads.length === 0 && (
+              <div className="col-span-full py-10 text-center text-sm text-white/60">
+                Nicio comandă nu corespunde filtrelor curente.
               </div>
-            );
-          })}
-        </div>
-
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="bg-white/5 text-white/60 uppercase border-b border-white/10">
-                <th className="py-3 px-4">Nr. Comandă</th>
-                <th className="py-3 px-4">Client</th>
-                <th className="py-3 px-4">Rută</th>
-                <th className="py-3 px-4">Marfă & LDM</th>
-                <th className="py-3 px-4">Temperatură</th>
-                <th className="py-3 px-4">Remorcă Alocată</th>
-                <th className="py-3 px-4">Documente</th>
-                <th className="py-3 px-4">Tarif</th>
-                <th className="py-3 px-4">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/80">
-              {filteredLoads.map((load) => (
-                <tr key={load.id} className="hover:bg-[#161f33]">
-                  <td className="py-3.5 px-4 tabular-nums font-bold text-indigo-300">
-                    {load.id}
-                  </td>
-                  <td className="py-3.5 px-4 font-semibold text-white">
-                    {load.client}
-                  </td>
-                  <td className="py-3.5 px-4 text-slate-200">{load.route}</td>
-                  <td className="py-3.5 px-4">
-                    <span className="tabular-nums font-bold text-emerald-400">
-                      {load.ldm.toFixed(1)} LDM
-                    </span>{' '}
-                    · <span className="text-slate-300">{load.weightTons}t</span>
-                    <div className="text-[10px] text-slate-400">{load.cargoDesc}</div>
-                  </td>
-                  <td className="py-3.5 px-4 tabular-nums text-cyan-300">
-                    {load.temp}
-                  </td>
-                  <td className="py-3.5 px-4 tabular-nums font-bold text-white">
-                    {(() => {
-                      const trObj = trailers.find((t) => t.id === load.trailerId);
-                      const trPlate = trObj ? trObj.tractorId.split(' (')[0] : '';
-                      const isTwo = Boolean(trPlate && trPlate !== load.trailerId);
-                      return (
-                        <span className="inline-flex items-center gap-1">
-                          {isTwo && (
-                            <>
-                              {renderEuroRoPlate(trPlate)}
-                              <span className="font-black text-white/75 text-[10px]">+</span>
-                            </>
-                          )}
-                          {renderEuroRoPlate(load.trailerId)}
+            )}
+            {visibleLoads.map((load, idx) => {
+              const trObj = trailers.find((t) => t.id === load.trailerId) || trailers[0];
+              const trPlate = trObj ? trObj.tractorId.split(' (')[0] : '';
+              const isTwo = Boolean(trPlate && trPlate !== load.trailerId);
+              const [fromPart, toPart] = load.route.split(' → ');
+              const selected = ordersSelection.isSelected(load.id);
+              return (
+                <div
+                  key={load.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setViewingOrder(load)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setViewingOrder(load);
+                    }
+                  }}
+                  className={`tahoe-card-inner rounded-[20px] p-3.5 border transition cursor-pointer flex flex-col justify-between gap-2.5 text-left ${
+                    selected
+                      ? 'border-[#0A84FF] bg-[#0A84FF]/10'
+                      : 'border-white/15 hover:border-[#0A84FF]/55 hover:bg-[#0A84FF]/5'
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <BulkCheckbox
+                          checked={selected}
+                          onChange={() => ordersSelection.toggleOne(load.id)}
+                          ariaLabel={`Selectează ${load.id}`}
+                        />
+                        <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/75 text-[10.5px] font-bold tabular-nums">
+                          #{ordersStartIdx + idx + 1}
                         </span>
-                      );
-                    })()}
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="tabular-nums font-extrabold text-xs text-indigo-300">
+                          {load.id}
+                        </span>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${
+                            load.status === 'În tranzit'
+                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                              : load.status === 'Planificată'
+                                ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                                : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                          }`}
+                        >
+                          {load.status}
+                        </span>
+                      </div>
+                      <span className="tabular-nums font-extrabold text-sm text-emerald-400 whitespace-nowrap shrink-0">
+                        {load.revenueEur}&#160;€
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="font-bold text-sm text-white leading-snug">
+                        {load.client}
+                      </div>
+                      <div className="text-xs text-slate-300 mt-0.5 font-medium">
+                        {load.route}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold tabular-nums">
+                        {load.ldm.toFixed(1)} LDM · {load.weightTons}t
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-bold tabular-nums">
+                        {load.temp}
+                      </span>
+                      <span className="text-white/60 text-[10.5px]">{load.cargoDesc}</span>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {isTwo && (
+                        <>
+                          {renderEuroRoPlate(trPlate)}
+                          <span className="font-black text-white/75 text-[10px]">+</span>
+                        </>
+                      )}
+                      {renderEuroRoPlate(load.trailerId)}
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          const trObj =
-                            trailers.find((t) => t.id === load.trailerId) ||
-                            trailers[0];
-                          const trPlate = trObj.tractorId.split(' (')[0];
-                          const [fromPart, toPart] = load.route.split(' → ');
+                        onClick={() =>
                           setPrintableDoc({
                             docType: 'CMR',
                             referenceNo: load.id,
@@ -811,23 +951,18 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
                             trailerPlate: trObj.id,
                             driverName: trObj.driver1.name,
                             revenueEur: load.revenueEur,
-                          });
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 border border-[#0A84FF]/35 text-[#64D2FF] font-bold text-[11px] cursor-pointer"
-                        title="Deschide și printează Scrisoarea CMR Internațional"
+                          })
+                        }
+                        title="Deschide și printează CMR"
+                        className="inline-flex items-center gap-1 px-3 py-1 rounded-full tahoe-btn-secondary text-white/85 hover:text-white font-semibold text-[11px] cursor-pointer"
                       >
-                        <Printer className="w-3 h-3" />
+                        <FileCheck2 className="w-3 h-3" aria-hidden="true" />
                         <span>CMR</span>
                       </button>
 
                       <button
                         type="button"
-                        onClick={() => {
-                          const trObj =
-                            trailers.find((t) => t.id === load.trailerId) ||
-                            trailers[0];
-                          const trPlate = trObj.tractorId.split(' (')[0];
-                          const [fromPart, toPart] = load.route.split(' → ');
+                        onClick={() =>
                           setPrintableDoc({
                             docType: 'INVOICE',
                             referenceNo: load.id.replace('LD-', '44'),
@@ -842,37 +977,297 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
                             trailerPlate: trObj.id,
                             driverName: trObj.driver1.name,
                             revenueEur: load.revenueEur,
-                          });
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#30D158]/15 hover:bg-[#30D158]/25 border border-[#30D158]/35 text-[#30D158] font-bold text-[11px] cursor-pointer"
-                        title="Deschide și printează Factura Proformă / Fiscală"
+                          })
+                        }
+                        title="Printează"
+                        aria-label={`Printează ${load.id}`}
+                        className="inline-flex items-center justify-center p-1.5 rounded-full tahoe-btn-secondary text-white/80 hover:text-white cursor-pointer"
                       >
-                        <Receipt className="w-3 h-3" />
-                        <span>Factură</span>
+                        <Printer className="w-3.5 h-3.5" aria-hidden="true" />
                       </button>
                     </div>
-                  </td>
-                  <td className="py-3.5 px-4 tabular-nums font-bold text-emerald-400">
-                    {load.revenueEur} €
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                        load.status === 'În tranzit'
-                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                          : load.status === 'Planificată'
-                          ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
-                          : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                      }`}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className={TAHOE_TABLE_WRAPPER_CLASS}>
+            <div className={TAHOE_TABLE_SCROLL_CLASS}>
+              <table className="w-full text-left" style={TAHOE_TABLE_STYLE}>
+                <thead>
+                  <tr>
+                    <CheckboxTh
+                      checked={ordersSelection.isAllVisibleSelected}
+                      indeterminate={ordersSelection.isSomeVisibleSelected}
+                      onChange={ordersSelection.toggleAllVisible}
+                      ariaLabel="Selectează toate cursele de pe pagină"
+                    />
+                    <SortableTh label="#" sort={null} align="center" className="w-7 px-1" />
+                    <SortableTh
+                      label="Comandă"
+                      sortKey="id"
+                      sort={orderSort}
+                      onToggle={(k) => setOrderSort((p) => toggleSortState(p, k))}
+                      className="px-1.5"
+                    />
+                    <SortableTh
+                      label="Client"
+                      sortKey="client"
+                      sort={orderSort}
+                      onToggle={(k) => setOrderSort((p) => toggleSortState(p, k))}
+                      className="px-1.5"
+                    />
+                    <SortableTh
+                      label="Rută"
+                      sortKey="route"
+                      sort={orderSort}
+                      onToggle={(k) => setOrderSort((p) => toggleSortState(p, k))}
+                      className="px-1.5"
+                    />
+                    <SortableTh
+                      label="Marfă & LDM"
+                      sortKey="ldm"
+                      sort={orderSort}
+                      onToggle={(k) => setOrderSort((p) => toggleSortState(p, k))}
+                      className="px-1.5"
+                    />
+                    <SortableTh label="Temp." sort={null} className="px-1.5" />
+                    <SortableTh
+                      label="Ansamblu"
+                      sortKey="trailer"
+                      sort={orderSort}
+                      onToggle={(k) => setOrderSort((p) => toggleSortState(p, k))}
+                      className="px-1.5"
+                    />
+                    <SortableTh label="Acțiuni" sort={null} className="px-1.5" />
+                    <SortableTh
+                      label="Tarif"
+                      sortKey="revenue"
+                      sort={orderSort}
+                      onToggle={(k) => setOrderSort((p) => toggleSortState(p, k))}
+                      align="right"
+                      className="px-1.5"
+                    />
+                    <SortableTh
+                      label="Status"
+                      sortKey="status"
+                      sort={orderSort}
+                      onToggle={(k) => setOrderSort((p) => toggleSortState(p, k))}
+                      className="px-1.5"
+                    />
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleLoads.length === 0 && (
+                    <tr>
+                      <td colSpan={11} className="py-10 text-center text-white/60">
+                        Nicio comandă nu corespunde filtrelor curente.
+                      </td>
+                    </tr>
+                  )}
+                  {visibleLoads.map((load, idx) => {
+                    const selected = ordersSelection.isSelected(load.id);
+                    return (
+                    <tr
+                      key={load.id}
+                      onClick={() => setViewingOrder(load)}
+                      className="cursor-pointer transition hover:bg-[#0A84FF]/10"
+                      style={getTahoeRowStyle(idx, selected)}
                     >
-                      {load.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                      <td className="px-1 text-center" style={TAHOE_CELL_BORDER_STYLE}>
+                        <BulkCheckbox
+                          checked={selected}
+                          onChange={() => ordersSelection.toggleOne(load.id)}
+                          ariaLabel={`Selectează ${load.id}`}
+                        />
+                      </td>
+                      <td
+                        className="px-1 text-center text-white/50 font-semibold tabular-nums"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        {ordersStartIdx + idx + 1}
+                      </td>
+                      <td
+                        className="px-1.5 tabular-nums font-bold text-indigo-300 whitespace-nowrap text-xs"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        {load.id}
+                      </td>
+                      <td
+                        className="px-1.5 font-semibold text-white max-w-[105px] whitespace-nowrap text-xs"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        <div className="truncate" title={load.client}>{load.client}</div>
+                      </td>
+                      <td
+                        className="px-1.5 text-slate-200 whitespace-nowrap text-[11px] max-w-[125px]"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        <div className="truncate" title={load.route}>{load.route}</div>
+                      </td>
+                      <td
+                        className="px-1.5 whitespace-nowrap max-w-[108px]"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        <div className="leading-tight text-xs">
+                          <span className="tabular-nums font-bold text-emerald-400">
+                            {load.ldm.toFixed(1)} LDM
+                          </span>{' '}
+                          · <span className="text-slate-300">{load.weightTons}t</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 truncate leading-tight" title={load.cargoDesc}>
+                          {load.cargoDesc}
+                        </div>
+                      </td>
+                      <td
+                        className="px-1.5 tabular-nums text-cyan-300 whitespace-nowrap text-xs"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        {load.temp}
+                      </td>
+                      <td
+                        className="px-1.5 tabular-nums font-bold text-white whitespace-nowrap"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        {(() => {
+                          const trObj = trailers.find((t) => t.id === load.trailerId);
+                          const trPlate = trObj ? trObj.tractorId.split(' (')[0] : '';
+                          const isTwo = Boolean(trPlate && trPlate !== load.trailerId);
+                          return (
+                            <span className="inline-flex items-center gap-1">
+                              {isTwo && (
+                                <>
+                                  {renderEuroRoPlate(trPlate)}
+                                  <span className="font-black text-white/75 text-[10px]">+</span>
+                                </>
+                              )}
+                              {renderEuroRoPlate(load.trailerId)}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      <td
+                        className="px-1.5 whitespace-nowrap"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center gap-1 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setViewingOrder(load)}
+                            className="p-1.5 rounded-full tahoe-btn-secondary text-white/80 hover:text-white inline-flex items-center justify-center cursor-pointer transition"
+                            title="Vezi detalii comandă"
+                            aria-label={`Detalii ${load.id}`}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const trObj =
+                                trailers.find((t) => t.id === load.trailerId) ||
+                                trailers[0];
+                              const trPlate = trObj.tractorId.split(' (')[0];
+                              const [fromPart, toPart] = load.route.split(' → ');
+                              setPrintableDoc({
+                                docType: 'CMR',
+                                referenceNo: load.id,
+                                clientName: load.client,
+                                fromCity: fromPart || 'Oradea',
+                                toCity: toPart || 'Rotterdam',
+                                cargoDesc: load.cargoDesc,
+                                ldm: load.ldm,
+                                weightTons: load.weightTons,
+                                tempRegime: load.temp,
+                                tractorPlate: trPlate,
+                                trailerPlate: trObj.id,
+                                driverName: trObj.driver1.name,
+                                revenueEur: load.revenueEur,
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full tahoe-btn-secondary text-white/85 hover:text-white font-semibold text-[10.5px] cursor-pointer transition"
+                            title="Deschide și printează Scrisoarea CMR Internațional"
+                          >
+                            <FileCheck2 className="w-3 h-3" />
+                            <span>CMR</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const trObj =
+                                trailers.find((t) => t.id === load.trailerId) ||
+                                trailers[0];
+                              const trPlate = trObj.tractorId.split(' (')[0];
+                              const [fromPart, toPart] = load.route.split(' → ');
+                              setPrintableDoc({
+                                docType: 'INVOICE',
+                                referenceNo: load.id.replace('LD-', '44'),
+                                clientName: load.client,
+                                fromCity: fromPart || 'Oradea',
+                                toCity: toPart || 'Rotterdam',
+                                cargoDesc: load.cargoDesc,
+                                ldm: load.ldm,
+                                weightTons: load.weightTons,
+                                tempRegime: load.temp,
+                                tractorPlate: trPlate,
+                                trailerPlate: trObj.id,
+                                driverName: trObj.driver1.name,
+                                revenueEur: load.revenueEur,
+                              });
+                            }}
+                            className="inline-flex items-center justify-center p-1.5 rounded-full tahoe-btn-secondary text-white/80 hover:text-white cursor-pointer transition"
+                            title="Printează"
+                            aria-label={`Printează ${load.id}`}
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                      <td
+                        className="px-1.5 tabular-nums font-bold text-emerald-400 whitespace-nowrap text-right text-xs"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        {load.revenueEur}&#160;€
+                      </td>
+                      <td
+                        className="px-1.5 whitespace-nowrap"
+                        style={TAHOE_CELL_BORDER_STYLE}
+                      >
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10.5px] font-semibold ${
+                            load.status === 'În tranzit'
+                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                              : load.status === 'Planificată'
+                                ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                                : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                          }`}
+                        >
+                          {load.status}
+                        </span>
+                      </td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <ListPaginationBar
+          total={ordersTotal}
+          startIdx={ordersStartIdx}
+          endIdx={ordersEndIdx}
+          pageSize={ordersPageSize}
+          onPageSizeChange={setOrdersPageSize}
+          page={ordersSafePage}
+          totalPages={ordersPageCount}
+          onPageChange={setOrdersPage}
+          unfilteredTotal={activeLoads.length}
+          unfilteredLabel="total curse"
+        />
       </div>
 
       {/* Bottom Panel from Image 4: "Cursă nouă" (1 Detalii -> 2 Alocare -> 3 Confirmare) */}
@@ -1030,16 +1425,20 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
               <div className="tahoe-card-inner rounded-xl p-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 text-xs">
                 <div className="flex flex-wrap items-center gap-4">
                   <div>
-                    <span className="text-slate-400">Rută comandă (Google Maps): </span>
+                    <span className="text-slate-400">Rută HGV 40T (Google Maps): </span>
                     <a
-                      href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(
-                        wizardOrder.fromCity
-                      )}&destination=${encodeURIComponent(wizardOrder.toCity)}&travelmode=driving`}
+                      href={buildGoogleMapsDirectionsUrl(
+                        `${wizardOrder.fromCity}, ${formatCountryBadge(wizardOrder.fromCountry)}`,
+                        `${wizardOrder.toCity}, ${formatCountryBadge(wizardOrder.toCountry)}`,
+                        [],
+                        { hgv: resolveHgvVehicleProfile(wizardTrailer.totalLdm).isHgv }
+                      )}
                       target="_blank"
                       rel="noopener noreferrer"
+                      title={resolveHgvVehicleProfile(wizardTrailer.totalLdm).googleMapsWarningRo}
                       className="font-extrabold text-[#0284c7] hover:underline"
                     >
-                      {wizardOrder.fromCity} ({formatCountryBadge(wizardOrder.fromCountry)}) → {wizardOrder.toCity} ({formatCountryBadge(wizardOrder.toCountry)}) ↗
+                      {wizardOrder.fromCity} ({formatCountryBadge(wizardOrder.fromCountry)}) → {wizardOrder.toCity} ({formatCountryBadge(wizardOrder.toCountry)}) · Coridor 40T ↗
                     </a>
                   </div>
                   <div>
@@ -1475,9 +1874,9 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
                     </div>
                   </div>
                   <div>
-                    <div className="text-white/55 text-[10px]">Timp Condus Est.</div>
+                    <div className="text-white/55 text-[10px]">Timp Camion 40T (CE 561)</div>
                     <div className="font-extrabold text-[#64D2FF]">
-                      ~{autoDriveHours}h (72 km/h HGV)
+                      ~{autoDriveHours}h ({autoHgvMetrics.tachoBreakdownRo})
                     </div>
                   </div>
                   <div>
@@ -1614,10 +2013,281 @@ export const OrdersAndTripsView: React.FC<OrdersAndTripsViewProps> = ({
         );
       })()}
 
+      {/* View Order Details Modal */}
+      {viewingOrder && (() => {
+        const trObj = trailers.find((t) => t.id === viewingOrder.trailerId) || trailers[0];
+        const trPlate = trObj ? trObj.tractorId.split(' (')[0] : '';
+        const [fromPart, toPart] = viewingOrder.route.split(' → ');
+        return (
+          <div
+            onClick={() => setViewingOrder(null)}
+            className="modal-backdrop-lock fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto overscroll-contain"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-2xl rounded-[28px] tahoe-glass-elevated border border-white/15 p-5 sm:p-6 space-y-4 my-auto"
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-white/15 pb-3">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-extrabold text-xs text-indigo-300 tabular-nums">
+                      {viewingOrder.id}
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[11px] font-semibold">
+                      {viewingOrder.status}
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-white/10 text-white/75 text-[11px] font-semibold">
+                      {viewingOrder.cmrStatus}
+                    </span>
+                  </div>
+                  <h3 className="text-lg sm:text-xl font-extrabold text-white mt-1.5">
+                    {viewingOrder.client}
+                  </h3>
+                  <p className="text-xs text-white/75 mt-0.5">
+                    Rută: <strong className="text-white">{viewingOrder.route}</strong> · {viewingOrder.cargoDesc}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingOrder(null)}
+                  aria-label="Închide detalii comandă"
+                  className="w-8 h-8 rounded-full tahoe-btn-secondary flex items-center justify-center text-white/80 cursor-pointer shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs tabular-nums">
+                <div className="tahoe-card-inner rounded-2xl p-3 border border-white/10">
+                  <div className="text-[10.5px] text-white/55">Capacitate</div>
+                  <div className="text-base font-extrabold text-emerald-400 mt-0.5">
+                    {viewingOrder.ldm.toFixed(1)} LDM · {viewingOrder.weightTons}t
+                  </div>
+                </div>
+                <div className="tahoe-card-inner rounded-2xl p-3 border border-white/10">
+                  <div className="text-[10.5px] text-white/55">Regim Temperatură</div>
+                  <div className="text-base font-extrabold text-cyan-300 mt-0.5">
+                    {viewingOrder.temp}
+                  </div>
+                </div>
+                <div className="tahoe-card-inner rounded-2xl p-3 border border-white/10">
+                  <div className="text-[10.5px] text-white/55">Ansamblu Alocat</div>
+                  <div className="text-sm font-extrabold text-white mt-0.5">
+                    {trPlate ? `${trPlate} + ` : ''}{viewingOrder.trailerId}
+                  </div>
+                </div>
+                <div className="tahoe-card-inner rounded-2xl p-3 border border-white/10">
+                  <div className="text-[10.5px] text-white/55">Tarif Agreat</div>
+                  <div className="text-base font-extrabold text-emerald-400 mt-0.5">
+                    {viewingOrder.revenueEur} €
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-wrap items-center justify-end gap-2 border-t border-white/15">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ord = viewingOrder;
+                    setViewingOrder(null);
+                    setPrintableDoc({
+                      docType: 'CMR',
+                      referenceNo: ord.id,
+                      clientName: ord.client,
+                      fromCity: fromPart || 'Oradea',
+                      toCity: toPart || 'Rotterdam',
+                      cargoDesc: ord.cargoDesc,
+                      ldm: ord.ldm,
+                      weightTons: ord.weightTons,
+                      tempRegime: ord.temp,
+                      tractorPlate: trPlate,
+                      trailerPlate: trObj.id,
+                      driverName: trObj.driver1.name,
+                      revenueEur: ord.revenueEur,
+                    });
+                  }}
+                  className="px-3.5 py-2 rounded-full bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 border border-[#0A84FF]/35 text-[#64D2FF] font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Printează CMR</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ord = viewingOrder;
+                    setViewingOrder(null);
+                    setPrintableDoc({
+                      docType: 'INVOICE',
+                      referenceNo: ord.id.replace('LD-', '44'),
+                      clientName: ord.client,
+                      fromCity: fromPart || 'Oradea',
+                      toCity: toPart || 'Rotterdam',
+                      cargoDesc: ord.cargoDesc,
+                      ldm: ord.ldm,
+                      weightTons: ord.weightTons,
+                      tempRegime: ord.temp,
+                      tractorPlate: trPlate,
+                      trailerPlate: trObj.id,
+                      driverName: trObj.driver1.name,
+                      revenueEur: ord.revenueEur,
+                    });
+                  }}
+                  className="px-3.5 py-2 rounded-full bg-[#30D158]/15 hover:bg-[#30D158]/25 border border-[#30D158]/35 text-[#30D158] font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>Printează Factură</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingOrder(null)}
+                  className="px-4 py-2 rounded-full tahoe-btn-secondary text-white font-bold text-xs cursor-pointer"
+                >
+                  Închide
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Printable CMR & Fiscal Invoice Modal */}
       <CmrAndInvoiceModal
         docData={printableDoc}
         onClose={() => setPrintableDoc(null)}
+      />
+
+      {showBulkEditOrders && (
+        <div
+          onClick={() => setShowBulkEditOrders(false)}
+          className="modal-backdrop-lock fixed inset-0 z-[2100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-edit-orders-title"
+            onSubmit={handleApplyBulkEditOrders}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-[26px] tahoe-glass border border-white/15 p-5 sm:p-6 shadow-2xl space-y-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 id="bulk-edit-orders-title" className="text-base font-extrabold text-white">
+                  Editare în masă — Comenzi &amp; curse ({ordersSelection.selectedCount} selectate)
+                </h3>
+                <p className="text-xs text-white/60 mt-0.5">
+                  Modificările se aplică imediat tuturor curselor bifate.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBulkEditOrders(false)}
+                aria-label="Închide"
+                className="w-8 h-8 rounded-full tahoe-btn-secondary flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Status Cursă
+                </label>
+                <select
+                  aria-label="Status cursă în masă"
+                  value={bulkOrderStatus}
+                  onChange={(e) =>
+                    setBulkOrderStatus(
+                      e.target.value as 'KEEP' | ActiveLoadItem['status']
+                    )
+                  }
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                >
+                  <option value="KEEP">Fără modificare</option>
+                  <option value="Planificată">Planificată</option>
+                  <option value="În tranzit">În tranzit</option>
+                  <option value="Descărcare">Descărcare</option>
+                  <option value="Finalizată">Finalizată</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Status CMR
+                </label>
+                <select
+                  aria-label="Status CMR în masă"
+                  value={bulkOrderCmrStatus}
+                  onChange={(e) =>
+                    setBulkOrderCmrStatus(
+                      e.target.value as 'KEEP' | ActiveLoadItem['cmrStatus']
+                    )
+                  }
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                >
+                  <option value="KEEP">Fără modificare</option>
+                  <option value="În așteptare aviz">În așteptare aviz</option>
+                  <option value="CMR Activ">CMR Activ</option>
+                  <option value="CMR Semnat Digital">CMR Semnat Digital</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Remorcă alocată
+                </label>
+                <select
+                  aria-label="Remorcă alocată în masă"
+                  value={bulkOrderTrailerId}
+                  onChange={(e) => setBulkOrderTrailerId(e.target.value)}
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                >
+                  <option value="">Fără modificare</option>
+                  {trailers.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.id} ({t.tractorId.split(' (')[0]})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Regim Temperatură
+                </label>
+                <input
+                  type="text"
+                  value={bulkOrderTemp}
+                  onChange={(e) => setBulkOrderTemp(e.target.value)}
+                  placeholder="ex: +4°C (Bi-Temp Z2)"
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowBulkEditOrders(false)}
+                className="px-4 py-2 rounded-full tahoe-btn-secondary text-xs font-bold text-white cursor-pointer"
+              >
+                Anulează
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white text-xs font-extrabold cursor-pointer"
+              >
+                Aplică la {ordersSelection.selectedCount} curse
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <BulkDeleteConfirmModal
+        open={showBulkDeleteOrders}
+        title="Ștergere în masă — Comenzi & curse"
+        count={ordersSelection.selectedCount}
+        previewLabels={selectedOrderItems.map((l) => `${l.id} · ${l.client} (${l.route})`)}
+        onCancel={() => setShowBulkDeleteOrders(false)}
+        onConfirm={handleConfirmBulkDeleteOrders}
       />
     </div>
   );

@@ -15,6 +15,28 @@ import {
   Truck,
   Users,
 } from 'lucide-react';
+import {
+  BulkActionBar,
+  BulkCheckbox,
+  BulkDeleteConfirmModal,
+  CheckboxTh,
+  ExportExcelButton,
+  ListPaginationBar,
+  SortableTh,
+  TAHOE_CELL_BORDER_STYLE,
+  TAHOE_TABLE_SCROLL_CLASS,
+  TAHOE_TABLE_STYLE,
+  TAHOE_TABLE_WRAPPER_CLASS,
+  ViewModeToggle,
+  getTahoeRowStyle,
+  paginateItems,
+  toggleSortState,
+  usePersistedPageSize,
+  usePersistedViewMode,
+  useTableSelection,
+  type SortState,
+} from './ListViewControls';
+import { exportRowsToExcel } from '../utils/exportExcel';
 import { TrailerUnit } from '../data/mockData';
 import {
   AppUserRole,
@@ -160,8 +182,50 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [roleFilter, setRoleFilter] = useState<'ALL' | StaffRoleType | 'INVITED'>('ALL');
+  const [usersViewMode, setUsersViewMode] = usePersistedViewMode(
+    'bluetrans_users_view_v1',
+    'list'
+  );
+  const [usersPageSize, setUsersPageSize] = usePersistedPageSize(
+    'bluetrans_users_pagesize_v1',
+    10
+  );
+  const [usersPage, setUsersPage] = useState(1);
+  const [userSort, setUserSort] = useState<
+    SortState<'name' | 'email' | 'role' | 'status' | 'lastLogin'> | null
+  >(null);
+  const [linksViewMode, setLinksViewMode] = usePersistedViewMode(
+    'bluetrans_driver_links_view_v1',
+    'list'
+  );
+  const [linksPageSize, setLinksPageSize] = usePersistedPageSize(
+    'bluetrans_driver_links_pagesize_v1',
+    10
+  );
+  const [linksPage, setLinksPage] = useState(1);
+  const [linksSort, setLinksSort] = useState<
+    SortState<'assembly' | 'driver' | 'url'> | null
+  >(null);
   const [copiedKey, setCopiedKey] = useState<string>('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
+
+  // Bulk Edit / Bulk Delete Utilizatori
+  const [showBulkEditUsers, setShowBulkEditUsers] = useState(false);
+  const [bulkUserRole, setBulkUserRole] = useState<'KEEP' | StaffRoleType>('KEEP');
+  const [bulkUserStatus, setBulkUserStatus] = useState<'KEEP' | UserAccountStatus>(
+    'KEEP'
+  );
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [showBulkDeleteUsers, setShowBulkDeleteUsers] = useState(false);
+
+  useEffect(() => {
+    setUsersPage(1);
+  }, [searchQuery, roleFilter, usersPageSize, userSort]);
+
+  useEffect(() => {
+    setLinksPage(1);
+  }, [linksPageSize, linksSort]);
 
   // Invite / Create Modal state
   const [inviteOpen, setInviteOpen] = useState<boolean>(false);
@@ -374,6 +438,210 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
     );
   });
 
+  const sortedUsers = [...filteredUsers].sort((a, b) => {
+    if (!userSort) return 0;
+    let cmp = 0;
+    switch (userSort.key) {
+      case 'name':
+        cmp = a.name.localeCompare(b.name, 'ro');
+        break;
+      case 'email':
+        cmp = a.email.localeCompare(b.email, 'ro');
+        break;
+      case 'role':
+        cmp = a.role.localeCompare(b.role, 'ro');
+        break;
+      case 'status':
+        cmp = a.status.localeCompare(b.status, 'ro');
+        break;
+      case 'lastLogin':
+        cmp = (a.lastLoginAt || '').localeCompare(b.lastLoginAt || '');
+        break;
+    }
+    return userSort.dir === 'asc' ? cmp : -cmp;
+  });
+
+  const {
+    total: usersTotal,
+    totalPages: usersPageCount,
+    safePage: usersSafePage,
+    startIdx: usersStartIdx,
+    endIdx: usersEndIdx,
+    visibleItems: visibleUsers,
+  } = paginateItems(sortedUsers, usersPageSize, usersPage);
+
+  const sortedTrailers = [...trailers].sort((a, b) => {
+    if (!linksSort) return 0;
+    let cmp = 0;
+    switch (linksSort.key) {
+      case 'assembly':
+        cmp = `${a.tractorId} ${a.id}`.localeCompare(
+          `${b.tractorId} ${b.id}`,
+          'ro'
+        );
+        break;
+      case 'driver':
+        cmp = a.driver1.name.localeCompare(b.driver1.name, 'ro');
+        break;
+      case 'url':
+        cmp = buildDriverPortalUrl(a.id).localeCompare(
+          buildDriverPortalUrl(b.id),
+          'ro'
+        );
+        break;
+    }
+    return linksSort.dir === 'asc' ? cmp : -cmp;
+  });
+
+  const {
+    total: linksTotal,
+    totalPages: linksPageCount,
+    safePage: linksSafePage,
+    startIdx: linksStartIdx,
+    endIdx: linksEndIdx,
+    visibleItems: visibleTrailers,
+  } = paginateItems(sortedTrailers, linksPageSize, linksPage);
+
+  const usersSelection = useTableSelection(
+    sortedUsers.map((u) => u.id),
+    visibleUsers.map((u) => u.id)
+  );
+  const selectedUserItems = sortedUsers.filter((u) =>
+    usersSelection.isSelected(u.id)
+  );
+  const deletableSelectedUsers = selectedUserItems.filter(
+    (u) => u.id !== currentUserId
+  );
+
+  const linksSelection = useTableSelection(
+    sortedTrailers.map((t) => t.id),
+    visibleTrailers.map((t) => t.id)
+  );
+  const selectedTrailerItems = sortedTrailers.filter((t) =>
+    linksSelection.isSelected(t.id)
+  );
+
+  const handleExportUsersExcel = (rowsOverride?: AuthUserRecord[]) => {
+    const targetRows = Array.isArray(rowsOverride) ? rowsOverride : sortedUsers;
+    const res = exportRowsToExcel({
+      fileName: 'BlueTrans_Utilizatori',
+      sheetName: 'Utilizatori',
+      rows: targetRows,
+      columns: [
+        { header: '#', value: (_, i) => i + 1, minWidth: 5, maxWidth: 8 },
+        { header: 'Nume', value: (u) => u.name },
+        { header: 'Username', value: (u) => u.username },
+        { header: 'Email', value: (u) => u.email },
+        { header: 'Rol', value: (u) => roleBadgeMeta(u.role).label },
+        { header: 'Status', value: (u) => statusBadgeMeta(u.status).label },
+        {
+          header: 'Ultima autentificare',
+          value: (u) => formatDateRo(u.lastLoginAt),
+        },
+      ],
+    });
+    setBulkFeedback(`Export Excel generat: ${res.fileName} (${res.rowCount} utilizatori).`);
+  };
+
+  const handleExportDriverLinksExcel = (rowsOverride?: TrailerUnit[]) => {
+    const targetRows = Array.isArray(rowsOverride) ? rowsOverride : sortedTrailers;
+    const res = exportRowsToExcel({
+      fileName: 'BlueTrans_Linkuri_Soferi',
+      sheetName: 'Linkuri Portal Soferi',
+      rows: targetRows,
+      columns: [
+        { header: '#', value: (_, i) => i + 1, minWidth: 5, maxWidth: 8 },
+        { header: 'Cap Tractor', value: (t) => t.tractorId },
+        { header: 'Semiremorcă', value: (t) => t.id },
+        { header: 'Șofer', value: (t) => t.driver1.name },
+        {
+          header: 'Link dedicat cabină',
+          value: (t) => buildDriverPortalUrl(t.id),
+        },
+      ],
+    });
+    setBulkFeedback(`Export Excel generat: ${res.fileName} (${res.rowCount} linkuri).`);
+  };
+
+  const handleApplyBulkEditUsers = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (bulkBusy || usersSelection.selectedCount === 0) return;
+    if (bulkUserRole === 'KEEP' && bulkUserStatus === 'KEEP') {
+      setShowBulkEditUsers(false);
+      return;
+    }
+    const editable = selectedUserItems.filter((u) => u.id !== currentUserId);
+    if (editable.length === 0) {
+      setErrorMsg('Contul tău curent nu poate fi modificat prin editare în masă.');
+      setShowBulkEditUsers(false);
+      return;
+    }
+    setBulkBusy(true);
+    setErrorMsg(null);
+    try {
+      let latestList: AuthUserRecord[] = users;
+      for (const targetUser of editable) {
+        const { users: updated } = await apiUpdateUser(authToken, {
+          id: targetUser.id,
+          role: bulkUserRole !== 'KEEP' ? bulkUserRole : undefined,
+          status: bulkUserStatus !== 'KEEP' ? bulkUserStatus : undefined,
+        });
+        latestList = updated;
+      }
+      syncUsersState(latestList);
+      usersSelection.clearSelection();
+      setShowBulkEditUsers(false);
+      setBulkFeedback(`${editable.length} utilizatori au fost actualizați în masă!`);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Eroare la actualizarea în masă.'
+      );
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleConfirmBulkDeleteUsers = async () => {
+    if (bulkBusy || deletableSelectedUsers.length === 0) {
+      if (deletableSelectedUsers.length === 0) {
+        setErrorMsg('Contul tău curent nu poate fi șters.');
+        setShowBulkDeleteUsers(false);
+      }
+      return;
+    }
+    setBulkBusy(true);
+    setErrorMsg(null);
+    try {
+      let latestList: AuthUserRecord[] = users;
+      for (const targetUser of deletableSelectedUsers) {
+        latestList = await apiDeleteUser(authToken, targetUser.id);
+      }
+      syncUsersState(latestList);
+      usersSelection.clearSelection();
+      setShowBulkDeleteUsers(false);
+      setBulkFeedback(
+        `${deletableSelectedUsers.length} utilizatori au fost șterși definitiv.`
+      );
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Eroare la ștergerea în masă.'
+      );
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkCopyDriverLinks = async () => {
+    const urls = selectedTrailerItems
+      .map((t) => `${t.tractorId} (${t.id}) — ${t.driver1.name}: ${buildDriverPortalUrl(t.id)}`)
+      .join('\n');
+    if (!urls) return;
+    await handleCopyText(urls, 'drv-bulk');
+    setBulkFeedback(
+      `${selectedTrailerItems.length} linkuri Portal Șoferi copiate în clipboard!`
+    );
+  };
+
   const generalDriverUrl = buildDriverPortalUrl();
 
   return (
@@ -470,231 +738,491 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-5 gap-1 w-full sm:w-auto sm:flex sm:flex-wrap sm:items-center sm:gap-1.5">
-              {(
-                [
-                  { id: 'ALL', label: 'Toți', mobileLabel: 'Toți' },
-                  { id: 'ADMIN', label: 'Administrator', mobileLabel: 'Admin' },
-                  { id: 'DISPECER', label: 'Dispecer', mobileLabel: 'Disp.' },
-                  { id: 'FINANCIAR', label: 'Financiar', mobileLabel: 'Fin.' },
-                  { id: 'INVITED', label: 'Invitați', mobileLabel: 'Invitați' },
-                ] as const
-              ).map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => setRoleFilter(f.id)}
-                  className={`tps-nav-tab-btn min-w-0 px-1.5 sm:px-3 py-1.5 rounded-full text-[10.5px] sm:text-xs font-bold truncate cursor-pointer ${
-                    roleFilter === f.id
-                      ? 'tahoe-btn-primary text-white'
-                      : 'tahoe-btn-secondary text-white/75 hover:text-white'
-                  }`}
-                >
-                  <span className="sm:hidden">{f.mobileLabel}</span>
-                  <span className="hidden sm:inline">{f.label}</span>
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+              <div className="grid grid-cols-5 gap-1 w-full sm:w-auto sm:flex sm:flex-wrap sm:items-center sm:gap-1.5">
+                {(
+                  [
+                    { id: 'ALL', label: 'Toți', mobileLabel: 'Toți' },
+                    { id: 'ADMIN', label: 'Administrator', mobileLabel: 'Admin' },
+                    { id: 'DISPECER', label: 'Dispecer', mobileLabel: 'Disp.' },
+                    { id: 'FINANCIAR', label: 'Financiar', mobileLabel: 'Fin.' },
+                    { id: 'INVITED', label: 'Invitați', mobileLabel: 'Invitați' },
+                  ] as const
+                ).map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setRoleFilter(f.id)}
+                    className={`tps-nav-tab-btn min-w-0 px-1.5 sm:px-3 py-1.5 rounded-full text-[10.5px] sm:text-xs font-bold truncate cursor-pointer ${
+                      roleFilter === f.id
+                        ? 'tahoe-btn-primary text-white'
+                        : 'tahoe-btn-secondary text-white/75 hover:text-white'
+                    }`}
+                  >
+                    <span className="sm:hidden">{f.mobileLabel}</span>
+                    <span className="hidden sm:inline">{f.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <ViewModeToggle
+                value={usersViewMode}
+                onChange={setUsersViewMode}
+                ariaLabel="Mod afișare utilizatori"
+              />
+              <ExportExcelButton
+                onClick={() => handleExportUsersExcel(sortedUsers)}
+                count={sortedUsers.length}
+                disabled={sortedUsers.length === 0}
+              />
             </div>
           </div>
 
-          {/* Responsive Semantic Users Table */}
-          <div
-            tabIndex={0}
-            role="region"
-            aria-label="Tabel utilizatori și roluri"
-            className="tms-users-table-region overflow-x-auto rounded-2xl border border-white/10"
-          >
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-white/10 bg-white/[0.04] text-[11px] font-bold text-white/60">
-                  <th scope="col" className="py-3 px-4">
-                    Utilizator
-                  </th>
-                  <th scope="col" className="py-3 px-4">
-                    Email
-                  </th>
-                  <th scope="col" className="py-3 px-4">
-                    Rol
-                  </th>
-                  <th scope="col" className="py-3 px-4">
-                    Status
-                  </th>
-                  <th scope="col" className="py-3 px-4">
-                    Ultima autentificare
-                  </th>
-                  <th scope="col" className="py-3 px-4 text-right">
-                    Acțiuni
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/8">
-                {loading ? (
-                  <tr>
-                    <td colSpan={6} className="py-8 text-center text-white/60 font-semibold">
-                      Se încarcă utilizatorii...
-                    </td>
-                  </tr>
-                ) : filteredUsers.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="py-8 text-center text-white/55 font-semibold">
-                      Niciun utilizator găsit.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredUsers.map((u) => {
-                    const roleMeta = roleBadgeMeta(u.role);
-                    const statusMeta = statusBadgeMeta(u.status);
-                    const invCopyKey = `inv-${u.id}`;
-                    const hasInviteLink = Boolean(u.inviteToken);
+          {bulkFeedback && (
+            <div className="p-3 rounded-2xl bg-[#30D158]/15 border border-[#30D158]/35 text-xs font-bold text-[#30D158] flex items-center justify-between gap-2">
+              <span>{bulkFeedback}</span>
+              <button
+                type="button"
+                onClick={() => setBulkFeedback(null)}
+                className="px-2.5 py-0.5 rounded-full bg-white/10 text-white cursor-pointer"
+              >
+                OK
+              </button>
+            </div>
+          )}
 
-                    return (
-                      <tr
-                        key={u.id}
-                        className="hover:bg-white/[0.03] transition-colors"
-                      >
-                        <th scope="row" className="py-3 px-4 font-bold text-white whitespace-nowrap">
-                          <div className="flex items-center gap-2.5">
-                            <span className="w-8 h-8 rounded-full bg-[#0A84FF]/20 border border-[#0A84FF]/35 text-[#64D2FF] font-extrabold text-xs flex items-center justify-center shrink-0">
-                              {u.name
-                                .split(' ')
-                                .map((p) => p[0])
-                                .slice(0, 2)
-                                .join('')
-                                .toUpperCase()}
+          <BulkActionBar
+            selectedCount={usersSelection.selectedCount}
+            totalFilteredCount={sortedUsers.length}
+            onSelectAllFiltered={usersSelection.selectAllFiltered}
+            onClearSelection={usersSelection.clearSelection}
+            onBulkExport={() => handleExportUsersExcel(selectedUserItems)}
+            onBulkEdit={() => {
+              setBulkUserRole('KEEP');
+              setBulkUserStatus('KEEP');
+              setShowBulkEditUsers(true);
+            }}
+            onBulkDelete={() => setShowBulkDeleteUsers(true)}
+            itemNounSingular="utilizator selectat"
+            itemNounPlural="utilizatori selectați"
+          />
+
+          {usersViewMode === 'cards' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {loading ? (
+                <div className="col-span-full py-8 text-center text-white/60 font-semibold text-xs">
+                  Se încarcă utilizatorii...
+                </div>
+              ) : visibleUsers.length === 0 ? (
+                <div className="col-span-full py-8 text-center text-white/55 font-semibold text-xs">
+                  Niciun utilizator găsit.
+                </div>
+              ) : (
+                visibleUsers.map((u, idx) => {
+                  const roleMeta = roleBadgeMeta(u.role);
+                  const statusMeta = statusBadgeMeta(u.status);
+                  const invCopyKey = `inv-${u.id}`;
+                  const hasInviteLink = Boolean(u.inviteToken);
+                  const selected = usersSelection.isSelected(u.id);
+                  return (
+                    <div
+                      key={u.id}
+                      className={`tahoe-card-inner rounded-[20px] p-4 border flex flex-col justify-between gap-3 ${
+                        selected
+                          ? 'border-[#0A84FF] bg-[#0A84FF]/10'
+                          : 'border-white/12'
+                      }`}
+                    >
+                      <div className="space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <BulkCheckbox
+                              checked={selected}
+                              onChange={() => usersSelection.toggleOne(u.id)}
+                              ariaLabel={`Selectează ${u.name}`}
+                            />
+                            <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/75 text-[10.5px] font-bold tabular-nums">
+                              #{usersStartIdx + idx + 1}
                             </span>
-                            <div>
-                              <div className="text-xs font-extrabold text-white">
-                                {u.name}
-                              </div>
-                              <div className="text-[11px] font-medium text-white/50">
-                                @{u.username}
-                              </div>
-                            </div>
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-bold border ${roleMeta.badgeClass}`}
+                            >
+                              {roleMeta.label}
+                            </span>
                           </div>
-                        </th>
-
-                        <td className="py-3 px-4 font-medium text-white/80 whitespace-nowrap">
-                          {u.email}
-                        </td>
-
-                        <td className="py-3 px-4 whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border ${roleMeta.badgeClass}`}
-                          >
-                            {roleMeta.label}
-                          </span>
-                        </td>
-
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${statusMeta.cls}`}
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold border ${statusMeta.cls}`}
                           >
                             <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dot}`} />
                             <span>{statusMeta.label}</span>
                           </span>
-                        </td>
+                        </div>
 
-                        <td className="py-3 px-4 text-white/65 tabular-nums whitespace-nowrap">
-                          {formatDateRo(u.lastLoginAt)}
-                        </td>
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-9 h-9 rounded-full bg-[#0A84FF]/20 border border-[#0A84FF]/35 text-[#64D2FF] font-extrabold text-xs flex items-center justify-center shrink-0">
+                            {u.name
+                              .split(' ')
+                              .map((p) => p[0])
+                              .slice(0, 2)
+                              .join('')
+                              .toUpperCase()}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-sm font-extrabold text-white truncate">
+                              {u.name}
+                            </div>
+                            <div className="text-[11px] text-white/55 truncate">
+                              @{u.username} · {u.email}
+                            </div>
+                          </div>
+                        </div>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right">
-                          <div className="inline-flex items-center justify-end gap-1.5">
-                            {hasInviteLink ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleCopyText(
-                                    buildInviteUrl(u.inviteToken || ''),
-                                    invCopyKey
-                                  )
-                                }
-                                className="px-3 py-1.5 rounded-full bg-[#0A84FF]/20 hover:bg-[#0A84FF]/30 border border-[#0A84FF]/40 text-[#64D2FF] text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                              >
-                                {copiedKey === invCopyKey ? (
-                                  <>
-                                    <Check className="w-3.5 h-3.5 text-[#30D158]" />
-                                    <span>Copiat</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-3.5 h-3.5" />
-                                    <span>Link invitație</span>
-                                  </>
-                                )}
-                              </button>
+                        <div className="text-[11px] text-white/60 tabular-nums">
+                          Ultima autentificare: <strong className="text-white/85">{formatDateRo(u.lastLoginAt)}</strong>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-1.5">
+                        {hasInviteLink ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleCopyText(buildInviteUrl(u.inviteToken || ''), invCopyKey)
+                            }
+                            title="Copiază link invitație"
+                            className="px-2.5 py-1 rounded-full tahoe-btn-secondary text-white/85 hover:text-white text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            {copiedKey === invCopyKey ? <Check className="w-3 h-3 text-[#30D158]" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedKey === invCopyKey ? 'Copiat' : 'Invitație'}</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleRegenerateInvite(u)}
+                            title="Generează link invitație"
+                            className="px-2.5 py-1 rounded-full tahoe-btn-secondary text-[11px] font-semibold text-white/80 hover:text-white inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            {copiedKey === invCopyKey ? <Check className="w-3 h-3 text-[#30D158]" /> : <RefreshCw className="w-3 h-3" />}
+                            <span>{copiedKey === invCopyKey ? 'Copiat' : 'Invitație'}</span>
+                          </button>
+                        )}
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(u)}
+                            title="Editează utilizator"
+                            aria-label={`Editează ${u.name}`}
+                            className="p-1.5 rounded-full tahoe-btn-secondary text-white/80 hover:text-white inline-flex items-center justify-center cursor-pointer transition"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          {u.id !== currentUserId &&
+                            (confirmDeleteId === u.id ? (
+                              <span className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleConfirmDelete(u.id)}
+                                  className="px-2 py-1 rounded-full bg-rose-500 text-white text-[10.5px] font-extrabold cursor-pointer"
+                                >
+                                  Șterge
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="px-2 py-1 rounded-full tahoe-btn-secondary text-[10.5px] font-bold cursor-pointer"
+                                >
+                                  Nu
+                                </button>
+                              </span>
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => handleRegenerateInvite(u)}
-                                title="Generează link de invitație / resetare parolă"
-                                className="px-2.5 py-1.5 rounded-full tahoe-btn-secondary text-[11px] font-bold text-white/80 hover:text-white inline-flex items-center gap-1 cursor-pointer"
+                                onClick={() => setConfirmDeleteId(u.id)}
+                                title={`Șterge ${u.name}`}
+                                aria-label={`Șterge ${u.name}`}
+                                className="p-1.5 rounded-full tahoe-btn-secondary text-white/75 hover:text-rose-400 inline-flex items-center justify-center cursor-pointer transition"
                               >
-                                {copiedKey === invCopyKey ? (
-                                  <>
-                                    <Check className="w-3.5 h-3.5 text-[#30D158]" />
-                                    <span>Link copiat</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <RefreshCw className="w-3 h-3" />
-                                    <span>Invitație</span>
-                                  </>
-                                )}
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(u)}
-                              aria-label={`Editează ${u.name}`}
-                              className="px-2.5 py-1.5 rounded-full tahoe-btn-secondary text-[11px] font-bold text-white/85 hover:text-white inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                              <span>Editează</span>
-                            </button>
-
-                            {u.id !== currentUserId &&
-                              (confirmDeleteId === u.id ? (
-                                <span className="inline-flex items-center gap-1 pl-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleConfirmDelete(u.id)}
-                                    className="px-2.5 py-1.5 rounded-full bg-rose-500 text-white text-[11px] font-extrabold cursor-pointer"
-                                  >
-                                    Șterge
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeleteId(null)}
-                                    className="px-2.5 py-1.5 rounded-full tahoe-btn-secondary text-[11px] font-bold cursor-pointer"
-                                  >
-                                    Nu
-                                  </button>
-                                </span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteId(u.id)}
-                                  aria-label={`Șterge ${u.name}`}
-                                  className="w-8 h-8 rounded-full bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 inline-flex items-center justify-center cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              ))}
-                          </div>
+                            ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : (
+            <div
+              tabIndex={0}
+              role="region"
+              aria-label="Tabel utilizatori și roluri"
+              className={TAHOE_TABLE_WRAPPER_CLASS}
+            >
+              <div className={TAHOE_TABLE_SCROLL_CLASS}>
+                <table className="w-full text-left" style={TAHOE_TABLE_STYLE}>
+                  <thead>
+                    <tr>
+                      <CheckboxTh
+                        checked={usersSelection.isAllVisibleSelected}
+                        indeterminate={usersSelection.isSomeVisibleSelected}
+                        onChange={usersSelection.toggleAllVisible}
+                        ariaLabel="Selectează toți utilizatorii de pe pagină"
+                      />
+                      <SortableTh label="#" sort={null} align="center" className="w-10" />
+                      <SortableTh
+                        label="Utilizator"
+                        sortKey="name"
+                        sort={userSort}
+                        onToggle={(k) => setUserSort((p) => toggleSortState(p, k))}
+                      />
+                      <SortableTh
+                        label="Email"
+                        sortKey="email"
+                        sort={userSort}
+                        onToggle={(k) => setUserSort((p) => toggleSortState(p, k))}
+                      />
+                      <SortableTh
+                        label="Rol"
+                        sortKey="role"
+                        sort={userSort}
+                        onToggle={(k) => setUserSort((p) => toggleSortState(p, k))}
+                      />
+                      <SortableTh
+                        label="Status"
+                        sortKey="status"
+                        sort={userSort}
+                        onToggle={(k) => setUserSort((p) => toggleSortState(p, k))}
+                      />
+                      <SortableTh
+                        label="Ultima autentificare"
+                        sortKey="lastLogin"
+                        sort={userSort}
+                        onToggle={(k) => setUserSort((p) => toggleSortState(p, k))}
+                      />
+                      <SortableTh label="Acțiuni" sort={null} align="right" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-white/60 font-semibold">
+                          Se încarcă utilizatorii...
                         </td>
                       </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                    ) : visibleUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-white/55 font-semibold">
+                          Niciun utilizator găsit.
+                        </td>
+                      </tr>
+                    ) : (
+                      visibleUsers.map((u, idx) => {
+                        const roleMeta = roleBadgeMeta(u.role);
+                        const statusMeta = statusBadgeMeta(u.status);
+                        const invCopyKey = `inv-${u.id}`;
+                        const hasInviteLink = Boolean(u.inviteToken);
+                        const selected = usersSelection.isSelected(u.id);
+
+                        return (
+                          <tr
+                            key={u.id}
+                            className="hover:bg-[#0A84FF]/10 transition-colors"
+                            style={getTahoeRowStyle(idx, selected)}
+                          >
+                            <td className="px-2 text-center" style={TAHOE_CELL_BORDER_STYLE}>
+                              <BulkCheckbox
+                                checked={selected}
+                                onChange={() => usersSelection.toggleOne(u.id)}
+                                ariaLabel={`Selectează ${u.name}`}
+                              />
+                            </td>
+                            <td
+                              className="px-2.5 text-center text-white/50 font-semibold tabular-nums"
+                              style={TAHOE_CELL_BORDER_STYLE}
+                            >
+                              {usersStartIdx + idx + 1}
+                            </td>
+                            <th
+                              scope="row"
+                              className="px-2.5 font-bold text-white whitespace-nowrap"
+                              style={TAHOE_CELL_BORDER_STYLE}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="w-7 h-7 rounded-full bg-[#0A84FF]/20 border border-[#0A84FF]/35 text-[#64D2FF] font-extrabold text-[11px] flex items-center justify-center shrink-0">
+                                  {u.name
+                                    .split(' ')
+                                    .map((p) => p[0])
+                                    .slice(0, 2)
+                                    .join('')
+                                    .toUpperCase()}
+                                </span>
+                                <div className="leading-tight">
+                                  <div className="text-xs font-extrabold text-white leading-tight">
+                                    {u.name}
+                                  </div>
+                                  <div className="text-[10.5px] font-medium text-white/50 leading-tight">
+                                    @{u.username}
+                                  </div>
+                                </div>
+                              </div>
+                            </th>
+
+                            <td
+                              className="px-2.5 font-medium text-white/80 whitespace-nowrap"
+                              style={TAHOE_CELL_BORDER_STYLE}
+                            >
+                              {u.email}
+                            </td>
+
+                            <td
+                              className="px-2.5 whitespace-nowrap"
+                              style={TAHOE_CELL_BORDER_STYLE}
+                            >
+                              <span
+                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${roleMeta.badgeClass}`}
+                              >
+                                {roleMeta.label}
+                              </span>
+                            </td>
+
+                            <td
+                              className="px-2.5 whitespace-nowrap"
+                              style={TAHOE_CELL_BORDER_STYLE}
+                            >
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${statusMeta.cls}`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dot}`} />
+                                <span>{statusMeta.label}</span>
+                              </span>
+                            </td>
+
+                            <td
+                              className="px-2.5 text-white/65 tabular-nums whitespace-nowrap"
+                              style={TAHOE_CELL_BORDER_STYLE}
+                            >
+                              {formatDateRo(u.lastLoginAt)}
+                            </td>
+
+                            <td
+                              className="px-2.5 whitespace-nowrap text-right"
+                              style={TAHOE_CELL_BORDER_STYLE}
+                            >
+                              <div className="inline-flex items-center justify-end gap-1.5">
+                                {hasInviteLink ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleCopyText(
+                                        buildInviteUrl(u.inviteToken || ''),
+                                        invCopyKey
+                                      )
+                                    }
+                                    title="Copiază link invitație"
+                                    className="px-2.5 py-1 rounded-full tahoe-btn-secondary text-white/85 hover:text-white text-[10.5px] font-semibold inline-flex items-center gap-1 cursor-pointer transition"
+                                  >
+                                    {copiedKey === invCopyKey ? (
+                                      <>
+                                        <Check className="w-3 h-3 text-[#30D158]" />
+                                        <span>Copiat</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy className="w-3 h-3" />
+                                        <span>Invitație</span>
+                                      </>
+                                    )}
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRegenerateInvite(u)}
+                                    title="Generează link de invitație / resetare parolă"
+                                    className="px-2.5 py-1 rounded-full tahoe-btn-secondary text-[10.5px] font-semibold text-white/80 hover:text-white inline-flex items-center gap-1 cursor-pointer transition"
+                                  >
+                                    {copiedKey === invCopyKey ? (
+                                      <>
+                                        <Check className="w-3 h-3 text-[#30D158]" />
+                                        <span>Copiat</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <RefreshCw className="w-3 h-3" />
+                                        <span>Invitație</span>
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => openEditModal(u)}
+                                  title="Editează utilizator"
+                                  aria-label={`Editează ${u.name}`}
+                                  className="p-1.5 rounded-full tahoe-btn-secondary text-white/80 hover:text-white inline-flex items-center justify-center cursor-pointer transition"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+
+                                {u.id !== currentUserId &&
+                                  (confirmDeleteId === u.id ? (
+                                    <span className="inline-flex items-center gap-1 pl-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleConfirmDelete(u.id)}
+                                        className="px-2.5 py-1 rounded-full bg-rose-500 text-white text-[10.5px] font-extrabold cursor-pointer"
+                                      >
+                                        Șterge
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmDeleteId(null)}
+                                        className="px-2.5 py-1 rounded-full tahoe-btn-secondary text-[10.5px] font-bold cursor-pointer"
+                                      >
+                                        Nu
+                                      </button>
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteId(u.id)}
+                                      title={`Șterge ${u.name}`}
+                                      aria-label={`Șterge ${u.name}`}
+                                      className="p-1.5 rounded-full tahoe-btn-secondary text-white/75 hover:text-rose-400 inline-flex items-center justify-center cursor-pointer transition"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  ))}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <ListPaginationBar
+            total={usersTotal}
+            startIdx={usersStartIdx}
+            endIdx={usersEndIdx}
+            pageSize={usersPageSize}
+            onPageSizeChange={setUsersPageSize}
+            page={usersSafePage}
+            totalPages={usersPageCount}
+            onPageChange={setUsersPage}
+            unfilteredTotal={staffUsers.length}
+            unfilteredLabel="total utilizatori"
+          />
         </div>
       ) : (
         <div className="tahoe-glass rounded-[24px] p-4 sm:p-5 space-y-4">
-          {/* General Driver Test Link Bar */}
+          {/* General Driver Test Link Bar + Carduri/Listă switch */}
           <div className="p-3.5 rounded-2xl tahoe-card-inner flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-9 h-9 rounded-full bg-[#30D158]/20 border border-[#30D158]/35 text-[#30D158] flex items-center justify-center shrink-0">
@@ -710,7 +1238,17 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <ViewModeToggle
+                value={linksViewMode}
+                onChange={setLinksViewMode}
+                ariaLabel="Mod afișare linkuri șoferi"
+              />
+              <ExportExcelButton
+                onClick={() => handleExportDriverLinksExcel(sortedTrailers)}
+                count={sortedTrailers.length}
+                disabled={sortedTrailers.length === 0}
+              />
               <button
                 type="button"
                 onClick={() => handleCopyText(generalDriverUrl, 'drv-all')}
@@ -740,81 +1278,241 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
             </div>
           </div>
 
-          {/* Per-Truck Direct Links Table */}
-          <div
-            tabIndex={0}
-            role="region"
-            aria-label="Linkuri directe Portal Șoferi pe camioane"
-            className="overflow-x-auto rounded-2xl border border-white/10"
-          >
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-white/10 bg-white/[0.04] text-[11px] font-bold text-white/60">
-                  <th scope="col" className="py-3 px-4">
-                    Ansamblu
-                  </th>
-                  <th scope="col" className="py-3 px-4">
-                    Șofer
-                  </th>
-                  <th scope="col" className="py-3 px-4">
-                    Link dedicat cabină
-                  </th>
-                  <th scope="col" className="py-3 px-4 text-right">
-                    Acțiuni
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/8">
-                {trailers.map((t) => {
-                  const url = buildDriverPortalUrl(t.id);
-                  const copyKey = `drv-${t.id}`;
-                  return (
-                    <tr key={t.id} className="hover:bg-white/[0.03] transition-colors">
-                      <th scope="row" className="py-3 px-4 font-extrabold text-white whitespace-nowrap">
-                        {t.tractorId} · <span className="text-[#64D2FF]">{t.id}</span>
-                      </th>
-                      <td className="py-3 px-4 font-semibold text-white/85 whitespace-nowrap">
-                        {t.driver1.name}
-                      </td>
-                      <td className="py-3 px-4 font-medium text-white/70 truncate max-w-xs">
-                        {url}
-                      </td>
-                      <td className="py-3 px-4 whitespace-nowrap text-right">
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleCopyText(url, copyKey)}
-                            className="px-3 py-1.5 rounded-full tahoe-btn-secondary text-[11px] font-bold text-white inline-flex items-center gap-1.5 cursor-pointer"
-                          >
-                            {copiedKey === copyKey ? (
-                              <>
-                                <Check className="w-3.5 h-3.5 text-[#30D158]" />
-                                <span>Copiat</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3.5 h-3.5" />
-                                <span>Copiază</span>
-                              </>
-                            )}
-                          </button>
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-3 py-1.5 rounded-full tahoe-btn-secondary text-[11px] font-bold text-white inline-flex items-center gap-1"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            <span>Cabină</span>
-                          </a>
+          {bulkFeedback && (
+            <div className="p-3 rounded-2xl bg-[#30D158]/15 border border-[#30D158]/35 text-xs font-bold text-[#30D158] flex items-center justify-between gap-2">
+              <span>{bulkFeedback}</span>
+              <button
+                type="button"
+                onClick={() => setBulkFeedback(null)}
+                className="px-2.5 py-0.5 rounded-full bg-white/10 text-white cursor-pointer"
+              >
+                OK
+              </button>
+            </div>
+          )}
+
+          <BulkActionBar
+            selectedCount={linksSelection.selectedCount}
+            totalFilteredCount={sortedTrailers.length}
+            onSelectAllFiltered={linksSelection.selectAllFiltered}
+            onClearSelection={linksSelection.clearSelection}
+            onBulkExport={() => handleExportDriverLinksExcel(selectedTrailerItems)}
+            extraActions={
+              <button
+                type="button"
+                onClick={handleBulkCopyDriverLinks}
+                className="px-3 py-1.5 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white text-[11px] sm:text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copiază linkuri ({linksSelection.selectedCount})</span>
+              </button>
+            }
+            itemNounSingular="ansamblu selectat"
+            itemNounPlural="ansambluri selectate"
+          />
+
+          {linksViewMode === 'cards' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {visibleTrailers.map((t, idx) => {
+                const url = buildDriverPortalUrl(t.id);
+                const copyKey = `drv-${t.id}`;
+                const selected = linksSelection.isSelected(t.id);
+                return (
+                  <div
+                    key={t.id}
+                    className={`tahoe-card-inner rounded-[20px] p-4 border flex flex-col justify-between gap-2.5 ${
+                      selected
+                        ? 'border-[#0A84FF] bg-[#0A84FF]/10'
+                        : 'border-white/12'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <BulkCheckbox
+                            checked={selected}
+                            onChange={() => linksSelection.toggleOne(t.id)}
+                            ariaLabel={`Selectează ${t.id}`}
+                          />
+                          <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/75 text-[10.5px] font-bold tabular-nums">
+                            #{linksStartIdx + idx + 1}
+                          </span>
                         </div>
-                      </td>
+                        <span className="text-xs font-extrabold text-[#64D2FF] tabular-nums">
+                          {t.id}
+                        </span>
+                      </div>
+                      <div className="text-sm font-extrabold text-white">
+                        {t.tractorId}
+                      </div>
+                      <div className="text-xs text-white/80 font-semibold">
+                        Șofer: {t.driver1.name}
+                      </div>
+                      <div className="text-[11px] text-white/55 truncate">{url}</div>
+                    </div>
+
+                    <div className="pt-2 border-t border-white/10 flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleCopyText(url, copyKey)}
+                        title={copiedKey === copyKey ? 'Link copiat' : 'Copiază link'}
+                        aria-label={`Copiază link ${t.id}`}
+                        className="p-1.5 rounded-full tahoe-btn-secondary text-white/80 hover:text-white inline-flex items-center justify-center cursor-pointer transition"
+                      >
+                        {copiedKey === copyKey ? (
+                          <Check className="w-3.5 h-3.5 text-[#30D158]" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Deschide Portal Cabină"
+                        className="px-3 py-1 rounded-full tahoe-btn-secondary text-[11px] font-semibold text-white/85 hover:text-white inline-flex items-center gap-1 transition"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>Cabină</span>
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div
+              tabIndex={0}
+              role="region"
+              aria-label="Linkuri directe Portal Șoferi pe camioane"
+              className={TAHOE_TABLE_WRAPPER_CLASS}
+            >
+              <div className={TAHOE_TABLE_SCROLL_CLASS}>
+                <table className="w-full text-left" style={TAHOE_TABLE_STYLE}>
+                  <thead>
+                    <tr>
+                      <CheckboxTh
+                        checked={linksSelection.isAllVisibleSelected}
+                        indeterminate={linksSelection.isSomeVisibleSelected}
+                        onChange={linksSelection.toggleAllVisible}
+                        ariaLabel="Selectează toate linkurile de pe pagină"
+                      />
+                      <SortableTh label="#" sort={null} align="center" className="w-10" />
+                      <SortableTh
+                        label="Ansamblu"
+                        sortKey="assembly"
+                        sort={linksSort}
+                        onToggle={(k) => setLinksSort((p) => toggleSortState(p, k))}
+                      />
+                      <SortableTh
+                        label="Șofer"
+                        sortKey="driver"
+                        sort={linksSort}
+                        onToggle={(k) => setLinksSort((p) => toggleSortState(p, k))}
+                      />
+                      <SortableTh
+                        label="Link dedicat cabină"
+                        sortKey="url"
+                        sort={linksSort}
+                        onToggle={(k) => setLinksSort((p) => toggleSortState(p, k))}
+                      />
+                      <SortableTh label="Acțiuni" sort={null} align="right" />
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody>
+                    {visibleTrailers.map((t, idx) => {
+                      const url = buildDriverPortalUrl(t.id);
+                      const copyKey = `drv-${t.id}`;
+                      const selected = linksSelection.isSelected(t.id);
+                      return (
+                        <tr
+                          key={t.id}
+                          className="hover:bg-[#0A84FF]/10 transition-colors"
+                          style={getTahoeRowStyle(idx, selected)}
+                        >
+                          <td className="px-2 text-center" style={TAHOE_CELL_BORDER_STYLE}>
+                            <BulkCheckbox
+                              checked={selected}
+                              onChange={() => linksSelection.toggleOne(t.id)}
+                              ariaLabel={`Selectează ${t.id}`}
+                            />
+                          </td>
+                          <td
+                            className="px-2.5 text-center text-white/50 font-semibold tabular-nums"
+                            style={TAHOE_CELL_BORDER_STYLE}
+                          >
+                            {linksStartIdx + idx + 1}
+                          </td>
+                          <th
+                            scope="row"
+                            className="py-2 px-2.5 font-extrabold text-white whitespace-nowrap"
+                            style={TAHOE_CELL_BORDER_STYLE}
+                          >
+                            {t.tractorId} · <span className="text-[#64D2FF]">{t.id}</span>
+                          </th>
+                          <td
+                            className="py-2 px-2.5 font-semibold text-white/85 whitespace-nowrap"
+                            style={TAHOE_CELL_BORDER_STYLE}
+                          >
+                            {t.driver1.name}
+                          </td>
+                          <td
+                            className="py-2 px-2.5 font-medium text-white/70 truncate max-w-xs"
+                            style={TAHOE_CELL_BORDER_STYLE}
+                          >
+                            {url}
+                          </td>
+                          <td
+                            className="py-2 px-2.5 whitespace-nowrap text-right"
+                            style={TAHOE_CELL_BORDER_STYLE}
+                          >
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleCopyText(url, copyKey)}
+                                title={copiedKey === copyKey ? 'Link copiat' : 'Copiază link'}
+                                aria-label={`Copiază link ${t.id}`}
+                                className="p-1.5 rounded-full tahoe-btn-secondary text-white/80 hover:text-white inline-flex items-center justify-center cursor-pointer transition"
+                              >
+                                {copiedKey === copyKey ? (
+                                  <Check className="w-3.5 h-3.5 text-[#30D158]" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Deschide Portal Cabină"
+                                className="px-2.5 py-1 rounded-full tahoe-btn-secondary text-[10.5px] font-semibold text-white/85 hover:text-white inline-flex items-center gap-1 transition"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                <span>Cabină</span>
+                              </a>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <ListPaginationBar
+            total={linksTotal}
+            startIdx={linksStartIdx}
+            endIdx={linksEndIdx}
+            pageSize={linksPageSize}
+            onPageSizeChange={setLinksPageSize}
+            page={linksSafePage}
+            totalPages={linksPageCount}
+            onPageChange={setLinksPage}
+            unfilteredTotal={trailers.length}
+            unfilteredLabel="total ansambluri"
+          />
         </div>
       )}
 
@@ -1299,6 +1997,117 @@ export const UsersAdminView: React.FC<UsersAdminViewProps> = ({
           </form>
         )}
       </dialog>
+
+      {showBulkEditUsers && (
+        <div
+          onClick={() => !bulkBusy && setShowBulkEditUsers(false)}
+          className="modal-backdrop-lock fixed inset-0 z-[2100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-edit-users-title"
+            onSubmit={handleApplyBulkEditUsers}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-[26px] tahoe-glass border border-white/15 p-5 sm:p-6 shadow-2xl space-y-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 id="bulk-edit-users-title" className="text-base font-extrabold text-white">
+                  Editare în masă — Utilizatori ({usersSelection.selectedCount} selectați)
+                </h3>
+                <p className="text-xs text-white/60 mt-0.5">
+                  Contul tău curent rămâne protejat la modificări în masă.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => setShowBulkEditUsers(false)}
+                aria-label="Închide"
+                className="w-8 h-8 rounded-full tahoe-btn-secondary flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Rol
+                </label>
+                <select
+                  aria-label="Rol utilizatori în masă"
+                  value={bulkUserRole}
+                  onChange={(e) =>
+                    setBulkUserRole(e.target.value as 'KEEP' | StaffRoleType)
+                  }
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                >
+                  <option value="KEEP">Fără modificare</option>
+                  {STAFF_ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-white/65 mb-1">
+                  Status cont
+                </label>
+                <select
+                  aria-label="Status utilizatori în masă"
+                  value={bulkUserStatus}
+                  onChange={(e) =>
+                    setBulkUserStatus(
+                      e.target.value as 'KEEP' | UserAccountStatus
+                    )
+                  }
+                  className="w-full tahoe-card-inner rounded-xl px-3 py-2 text-white font-semibold border border-white/15"
+                >
+                  <option value="KEEP">Fără modificare</option>
+                  <option value="ACTIVE">Activ</option>
+                  <option value="DISABLED">Dezactivat</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => setShowBulkEditUsers(false)}
+                className="px-4 py-2 rounded-full tahoe-btn-secondary text-xs font-bold text-white cursor-pointer"
+              >
+                Anulează
+              </button>
+              <button
+                type="submit"
+                disabled={bulkBusy}
+                className="px-5 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white text-xs font-extrabold cursor-pointer disabled:opacity-50"
+              >
+                {bulkBusy ? 'Se aplică...' : 'Aplică modificările'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <BulkDeleteConfirmModal
+        open={showBulkDeleteUsers}
+        title="Ștergere în masă — Utilizatori"
+        count={deletableSelectedUsers.length}
+        previewLabels={deletableSelectedUsers.map((u) => `${u.name} (${u.email})`)}
+        warningNote={
+          selectedUserItems.some((u) => u.id === currentUserId)
+            ? 'Contul tău curent este protejat și nu va fi șters.'
+            : undefined
+        }
+        loading={bulkBusy}
+        onCancel={() => !bulkBusy && setShowBulkDeleteUsers(false)}
+        onConfirm={handleConfirmBulkDeleteUsers}
+      />
     </div>
   );
 };

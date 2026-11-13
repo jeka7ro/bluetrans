@@ -1,11 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Sparkles,
-  AlertTriangle,
   CalendarClock,
   CheckCircle2,
-  ArrowRight,
-  ThermometerSnowflake,
   Building2,
   Globe,
   PackagePlus,
@@ -13,8 +10,10 @@ import {
   GitCompare,
   ArrowLeftRight,
   ShieldCheck,
+  RefreshCw,
 } from 'lucide-react';
 import {
+  CargoOrder,
   SmartGroupageMatch,
   FutureAvailabilitySlot,
   TrailerUnit,
@@ -24,11 +23,24 @@ import {
   GroupageCandidateVariant,
   formatCountryBadge,
 } from '../data/mockData';
+import type { HourlyPlanningCard } from './Planning7DaysView';
+import {
+  buildDynamicGroupageVariants,
+  computeDynamicFutureAvailabilitySlots,
+  detectDynamicCargoTransfers,
+} from '../utils/smartLogisticsEngine';
 
 interface SmartGroupageViewProps {
   trailers: TrailerUnit[];
   matches: SmartGroupageMatch[];
   futureSlots: FutureAvailabilitySlot[];
+  unassignedOrders?: CargoOrder[];
+  planningCards?: HourlyPlanningCard[];
+  exchangeMatches?: SmartGroupageMatch[];
+  isScanningExchanges?: boolean;
+  onScanExchanges?: () => void;
+  onConfirmGroupageVariant?: (variant: GroupageCandidateVariant) => void;
+  onApproveCargoTransfer?: (xfer: CargoTransferOpportunity) => void;
   onAcceptGroupageMatch: (match: SmartGroupageMatch) => void;
   onNavigateToOffers: () => void;
 }
@@ -37,6 +49,13 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
   trailers,
   matches,
   futureSlots,
+  unassignedOrders = [],
+  planningCards = [],
+  exchangeMatches = [],
+  isScanningExchanges = false,
+  onScanExchanges,
+  onConfirmGroupageVariant,
+  onApproveCargoTransfer,
   onAcceptGroupageMatch,
   onNavigateToOffers,
 }) => {
@@ -45,29 +64,115 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
   const [selectedOrderForComparison, setSelectedOrderForComparison] =
     useState<string>('CMD-951');
   const [confirmedVariantId, setConfirmedVariantId] = useState<string | null>(null);
-  const [transfers, setTransfers] = useState<CargoTransferOpportunity[]>(
-    CARGO_TRANSFER_OPPORTUNITIES
-  );
+  const [approvedTransferIds, setApprovedTransferIds] = useState<string[]>([]);
   const [toast, setToast] = useState<string | null>(null);
+
+  const combinedMatches = useMemo(() => {
+    const seen = new Set<string>();
+    const out: SmartGroupageMatch[] = [];
+    for (const m of [...matches, ...exchangeMatches]) {
+      if (!seen.has(m.id)) {
+        seen.add(m.id);
+        out.push(m);
+      }
+    }
+    return out;
+  }, [matches, exchangeMatches]);
 
   const filteredMatches =
     sourceFilter === 'ALL'
-      ? matches
-      : matches.filter((m) => m.sourceType === sourceFilter);
+      ? combinedMatches
+      : combinedMatches.filter((m) => m.sourceType === sourceFilter);
 
   const trailersWithUnusedSpace = trailers.filter((t) => t.freeLdm > 0);
-  const currentVariants: GroupageCandidateVariant[] =
-    MULTI_VARIANT_GROUPAGE_ANALYSES[selectedOrderForComparison] ||
-    MULTI_VARIANT_GROUPAGE_ANALYSES['CMD-951'];
+
+  const comparisonOrderTabs = useMemo(() => {
+    const defaults: { id: string; short: string; full: string; order?: CargoOrder }[] = [
+      {
+        id: 'CMD-951',
+        short: 'CMD-951 · 3 LDM',
+        full: 'CMD-951: Viena → Rotterdam (3 LDM)',
+        order: unassignedOrders.find((o) => o.id === 'CMD-951'),
+      },
+      {
+        id: 'CMD-954',
+        short: 'CMD-954 · 2 LDM',
+        full: 'CMD-954: München → Almere (2 LDM)',
+        order: unassignedOrders.find((o) => o.id === 'CMD-954'),
+      },
+    ];
+    for (const o of unassignedOrders) {
+      if (o.id !== 'CMD-951' && o.id !== 'CMD-954') {
+        defaults.push({
+          id: o.id,
+          short: `${o.id} · ${o.ldm} LDM`,
+          full: `${o.id}: ${o.fromCity} → ${o.toCity} (${o.ldm} LDM)`,
+          order: o,
+        });
+      }
+    }
+    return defaults.slice(0, 5);
+  }, [unassignedOrders]);
+
+  const selectedComparisonOrder = useMemo<CargoOrder>(() => {
+    const found = unassignedOrders.find((o) => o.id === selectedOrderForComparison);
+    if (found) return found;
+    return {
+      id: selectedOrderForComparison,
+      client: 'Marfă Grupaj Prioritară',
+      fromCity: selectedOrderForComparison === 'CMD-954' ? 'München' : 'Viena',
+      fromCountry: selectedOrderForComparison === 'CMD-954' ? 'DE' : 'AT',
+      toCity: selectedOrderForComparison === 'CMD-954' ? 'Almere' : 'Rotterdam',
+      toCountry: 'NL',
+      ldm: selectedOrderForComparison === 'CMD-954' ? 2.0 : 3.0,
+      weightTons: selectedOrderForComparison === 'CMD-954' ? 3.2 : 4.5,
+      pallets: selectedOrderForComparison === 'CMD-954' ? 5 : 8,
+      stackable: true,
+      palletExchange: false,
+      tempReq: 4,
+      tempZone: 'Flexibil',
+      revenueEur: selectedOrderForComparison === 'CMD-954' ? 520 : 880,
+      status: 'Nealocat',
+      loadingWindow: 'Azi 17:00',
+      deliveryDeadline: 'Mâine 12:00',
+    };
+  }, [unassignedOrders, selectedOrderForComparison]);
+
+  const currentVariants: GroupageCandidateVariant[] = useMemo(
+    () =>
+      buildDynamicGroupageVariants(
+        selectedComparisonOrder,
+        trailers,
+        MULTI_VARIANT_GROUPAGE_ANALYSES[selectedOrderForComparison]
+      ),
+    [selectedComparisonOrder, trailers, selectedOrderForComparison]
+  );
+
+  const transfers: CargoTransferOpportunity[] = useMemo(
+    () =>
+      detectDynamicCargoTransfers(trailers, CARGO_TRANSFER_OPPORTUNITIES).map((x) =>
+        approvedTransferIds.includes(x.id)
+          ? { ...x, status: 'Aprobat în Planning' as const }
+          : x
+      ),
+    [trailers, approvedTransferIds]
+  );
+
+  const mergedFutureSlots = useMemo(
+    () => computeDynamicFutureAvailabilitySlots(trailers, planningCards, futureSlots),
+    [trailers, planningCards, futureSlots]
+  );
 
   const [availHorizon, setAvailHorizon] = useState<number>(7);
-  // „Azi” în datele demo = Luni 9 Noi (slot „Marți, 10 Nov” = „Mâine”)
+  // Suportă atât sloturi datate ('10 Nov') cât și sloturi dinamice relative ('+2 zile')
   const DEMO_TODAY_DAY = 9;
   const slotOffsetDays = (s: { availableDate: string }) => {
+    const rel = s.availableDate.match(/\+(\d+)\s*zile?/i);
+    if (rel) return Number(rel[1]);
     const m = s.availableDate.match(/(\d{1,2})\s*Nov/i);
     return m ? Number(m[1]) - DEMO_TODAY_DAY : 0;
   };
-  const visibleSlots = futureSlots.filter((s) => slotOffsetDays(s) <= availHorizon);
+  const visibleSlots = mergedFutureSlots.filter((s) => slotOffsetDays(s) <= availHorizon);
   const slotState = (status: string) =>
     status.startsWith('Eliberată')
       ? { label: 'Simulat', bg: 'rgba(191,90,242,0.18)', color: '#BF5AF2' }
@@ -77,21 +182,19 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
 
   const handleConfirmVariant = (variant: GroupageCandidateVariant) => {
     setConfirmedVariantId(variant.id);
+    onConfirmGroupageVariant?.(variant);
     setToast(
-      `${variant.variantRank} pe remorca ${variant.trailerId} a fost CONFIRMATĂ! Profit net estimat: +${variant.criterion8_estimatedProfitEur} €.`
+      `${variant.variantRank} pe remorca ${variant.trailerId} a fost CONFIRMATĂ și aplicată în Planning! Profit net estimat: +${variant.criterion8_estimatedProfitEur} €.`
     );
   };
 
   const handleApproveCargoTransfer = (xferId: string) => {
-    setTransfers((prev) =>
-      prev.map((x) =>
-        x.id === xferId ? { ...x, status: 'Aprobat în Planning' } : x
-      )
-    );
     const target = transfers.find((x) => x.id === xferId);
+    setApprovedTransferIds((prev) => (prev.includes(xferId) ? prev : [...prev, xferId]));
     if (target) {
+      onApproveCargoTransfer?.(target);
       setToast(
-        `Transferul ${target.code} (${target.donorTrailerId} → ${target.receiverTrailerId} în ${target.transferHubCity}) a fost aprobat! Economie: +${target.netGainEur} €.`
+        `Transferul ${target.code} (${target.donorTrailerId} → ${target.receiverTrailerId} în ${target.transferHubCity}) a fost aprobat în Planning! Economie: +${target.netGainEur} €.`
       );
     }
   };
@@ -140,28 +243,20 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
           </div>
 
           <div className="grid grid-cols-2 gap-1.5 w-full sm:w-auto sm:flex sm:flex-wrap sm:items-center sm:gap-2">
-            <button
-              onClick={() => setSelectedOrderForComparison('CMD-951')}
-              className={`min-w-0 px-2.5 sm:px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold truncate transition cursor-pointer ${
-                selectedOrderForComparison === 'CMD-951'
-                  ? 'bg-[#0A84FF] text-white shadow-md'
-                  : 'bg-white/[0.06] text-white/70 hover:text-white'
-              }`}
-            >
-              <span className="sm:hidden">CMD-951 · 3 LDM</span>
-              <span className="hidden sm:inline">CMD-951: Viena → Rotterdam (3 LDM)</span>
-            </button>
-            <button
-              onClick={() => setSelectedOrderForComparison('CMD-954')}
-              className={`min-w-0 px-2.5 sm:px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold truncate transition cursor-pointer ${
-                selectedOrderForComparison === 'CMD-954'
-                  ? 'bg-[#0A84FF] text-white shadow-md'
-                  : 'bg-white/[0.06] text-white/70 hover:text-white'
-              }`}
-            >
-              <span className="sm:hidden">CMD-954 · 2 LDM</span>
-              <span className="hidden sm:inline">CMD-954: München → Almere (2 LDM)</span>
-            </button>
+            {comparisonOrderTabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setSelectedOrderForComparison(tab.id)}
+                className={`min-w-0 px-2.5 sm:px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold truncate transition cursor-pointer ${
+                  selectedOrderForComparison === tab.id
+                    ? 'bg-[#0A84FF] text-white shadow-md'
+                    : 'bg-white/[0.06] text-white/70 hover:text-white'
+                }`}
+              >
+                <span className="sm:hidden">{tab.short}</span>
+                <span className="hidden sm:inline">{tab.full}</span>
+              </button>
+            ))}
           </div>
         </div>
 
@@ -379,28 +474,41 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
             Sugestii de Marfă pentru Spațiul Liber ({trailersWithUnusedSpace.length} remorci)
           </h2>
 
-          <div className="grid grid-cols-4 gap-1.5 w-full sm:w-auto sm:flex sm:items-center sm:gap-1.5 sm:overflow-x-auto no-scrollbar">
-            {[
-              { id: 'ALL', label: 'Toate (4)', mobileLabel: 'Toate (4)' },
-              { id: 'Comandă Internă', label: 'Interne', mobileLabel: 'Interne' },
-              { id: 'Client Recurent', label: 'Clienți Recurenți', mobileLabel: 'Recurenți' },
-              { id: 'Bursă (TimoCom / Trans.eu)', label: 'Burse', mobileLabel: 'Burse' },
-            ].map((tab) => (
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            {onScanExchanges && (
               <button
-                key={tab.id}
                 type="button"
-                aria-pressed={sourceFilter === tab.id}
-                onClick={() => setSourceFilter(tab.id)}
-                className={`min-w-0 w-full sm:w-auto min-h-[36px] sm:min-h-0 px-2 sm:px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold flex items-center justify-center whitespace-nowrap transition cursor-pointer border ${
-                  sourceFilter === tab.id
-                    ? 'bg-[#0A84FF] border-[#0A84FF] text-white'
-                    : 'bg-white/[0.06] border-transparent text-white/65 hover:text-white'
-                }`}
+                disabled={isScanningExchanges}
+                onClick={onScanExchanges}
+                className="px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-bold bg-[#30D158]/20 text-[#30D158] border border-[#30D158]/40 hover:bg-[#30D158]/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition"
               >
-                <span className="sm:hidden truncate">{tab.mobileLabel}</span>
-                <span className="hidden sm:inline">{tab.label}</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isScanningExchanges ? 'animate-spin' : ''}`} />
+                <span>{isScanningExchanges ? 'Se scanează...' : 'Scanează Burse'}</span>
               </button>
-            ))}
+            )}
+            <div className="grid grid-cols-4 gap-1.5 w-full sm:w-auto sm:flex sm:items-center sm:gap-1.5 sm:overflow-x-auto no-scrollbar">
+              {[
+                { id: 'ALL', label: `Toate (${combinedMatches.length})`, mobileLabel: `Toate (${combinedMatches.length})` },
+                { id: 'Comandă Internă', label: 'Interne', mobileLabel: 'Interne' },
+                { id: 'Client Recurent', label: 'Clienți Recurenți', mobileLabel: 'Recurenți' },
+                { id: 'Bursă (TimoCom / Trans.eu)', label: 'Burse', mobileLabel: 'Burse' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  aria-pressed={sourceFilter === tab.id}
+                  onClick={() => setSourceFilter(tab.id)}
+                  className={`min-w-0 w-full sm:w-auto min-h-[36px] sm:min-h-0 px-2 sm:px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold flex items-center justify-center whitespace-nowrap transition cursor-pointer border ${
+                    sourceFilter === tab.id
+                      ? 'bg-[#0A84FF] border-[#0A84FF] text-white'
+                      : 'bg-white/[0.06] border-transparent text-white/65 hover:text-white'
+                  }`}
+                >
+                  <span className="sm:hidden truncate">{tab.mobileLabel}</span>
+                  <span className="hidden sm:inline">{tab.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -445,20 +553,20 @@ export const SmartGroupageView: React.FC<SmartGroupageViewProps> = ({
                   <div className="grid grid-cols-3 gap-2 text-center bg-black/30 p-3 rounded-2xl border border-white/[0.06]">
                     <div>
                       <div className="text-[10px] text-white/50">Tarif</div>
-                      <div className="text-sm sm:text-base font-bold text-white tabular-nums">
-                        {m.estimatedRateEur} €
+                      <div className="text-sm sm:text-base font-bold text-white tabular-nums whitespace-nowrap">
+                        {m.estimatedRateEur}&#160;€
                       </div>
                     </div>
                     <div>
                       <div className="text-[10px] text-white/50">Cost Incr.</div>
-                      <div className="text-sm sm:text-base font-bold text-white/80 tabular-nums">
-                        -{m.incrementalCostEur} €
+                      <div className="text-sm sm:text-base font-bold text-white/80 tabular-nums whitespace-nowrap">
+                        -{m.incrementalCostEur}&#160;€
                       </div>
                     </div>
                     <div>
                       <div className="text-[10px] text-white/50">Contribuție</div>
-                      <div className="text-sm sm:text-base font-bold text-[#30D158] tabular-nums">
-                        +{m.netContributionEur} €
+                      <div className="text-sm sm:text-base font-bold text-[#30D158] tabular-nums whitespace-nowrap">
+                        +{m.netContributionEur}&#160;€
                       </div>
                     </div>
                   </div>

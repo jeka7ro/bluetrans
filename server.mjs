@@ -3,6 +3,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { handleAuthApiRequest, resolveDefaultAuthDbPath } from './authServer.mjs'
+import { closeAllTmsSseClients, handleTmsApiRequest } from './tmsServer.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const ROOT_DIR = path.dirname(__filename)
@@ -328,6 +329,11 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  // 0b. Multi-Tenant TMS Persistence, SSE Sync, Public Client Offers & Integrations API
+  if (handleTmsApiRequest(req, res, ROOT_DIR, AUTH_DB_PATH)) {
+    return
+  }
+
   // 1. Healthcheck endpoint (for Railway & uptime monitoring)
   if ((req.method === 'GET' || req.method === 'HEAD') && reqUrl === '/api/health') {
     const docs = scanActeFlotaDir(ACTE_FLOTA_DIR)
@@ -649,12 +655,23 @@ server.listen(PORT, HOST, () => {
   )
 })
 
+let isShuttingDown = false
+
 function shutdown(signal) {
+  if (isShuttingDown) return
+  isShuttingDown = true
   console.log(`[Blue Trans Spedition] Oprire controlată (${signal})...`)
+  closeAllTmsSseClients()
   server.close(() => {
     process.exit(0)
   })
-  setTimeout(() => process.exit(0), 5000).unref()
+  if (typeof server.closeIdleConnections === 'function') {
+    server.closeIdleConnections()
+  }
+  if (typeof server.closeAllConnections === 'function') {
+    server.closeAllConnections()
+  }
+  setTimeout(() => process.exit(0), 1500).unref()
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'))

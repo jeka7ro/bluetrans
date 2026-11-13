@@ -7,6 +7,7 @@ import {
   ChevronUp,
   CircleDot,
   Clock,
+  Globe,
   Maximize2,
   Minimize2,
   Navigation,
@@ -32,12 +33,28 @@ import {
   resolveLiveCheckpointWeather,
   subscribeLiveEuropeanWeather,
 } from '../utils/accuWeatherCanvas';
+import {
+  attachSolarTerminatorOverlay,
+  computeSubsolarPoint,
+  isNightAtCoords,
+} from '../utils/solarTerminator';
+import {
+  computeHgvRouteMetrics,
+  resolveHgvVehicleProfile,
+} from '../utils/googleMapsLinks';
 
 export { CORRIDOR_ROUTES };
 export type { RouteDefinition };
 
 interface EuropeLiveMapProps {
   trailers: TrailerUnit[];
+  liveFleetPositions?: {
+    plate: string;
+    place: string;
+    coords: [number, number];
+    speedKmh?: number;
+    ping?: string;
+  }[];
   activeTrips?: MapTripItem[];
   pastTrips?: MapTripItem[];
   singleTripItem?: MapTripItem;
@@ -47,6 +64,9 @@ interface EuropeLiveMapProps {
   onNavigateSwap?: () => void;
   heightClass?: string;
   singleTripMode?: boolean;
+  hideRouteDetailsBelow?: boolean;
+  embeddedInCard?: boolean;
+  cleanCompactHud?: boolean;
 }
 
 // Restul capetelor tractor reale din evidența flotei (Google Sheet).
@@ -119,6 +139,7 @@ function buildFallbackItemsFromTrailers(trailers: TrailerUnit[]): MapTripItem[] 
 
 export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
   trailers,
+  liveFleetPositions,
   activeTrips,
   pastTrips = [],
   singleTripItem,
@@ -128,6 +149,9 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
   onNavigateSwap,
   heightClass = 'h-[360px] sm:h-[420px]',
   singleTripMode = false,
+  hideRouteDetailsBelow = false,
+  embeddedInCard = false,
+  cleanCompactHud = false,
 }) => {
   const mapHostWrapperRef = useRef<HTMLDivElement | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -186,6 +210,15 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       return true;
     }
   });
+  const [showDayNight, setShowDayNight] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('bluetrans_map_daynight_on_v1');
+      return saved === null ? true : saved === '1';
+    } catch {
+      return true;
+    }
+  });
+  const [solarTick, setSolarTick] = useState<number>(0);
 
   useEffect(() => {
     try {
@@ -194,6 +227,23 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       // ignore
     }
   }, [showWeatherRadar]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('bluetrans_map_daynight_on_v1', showDayNight ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [showDayNight]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setSolarTick((n) => n + 1);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const liveSubsolar = useMemo(() => computeSubsolarPoint(Date.now()), [solarTick]);
 
   const [liveWeatherSnap, setLiveWeatherSnap] =
     useState<LiveEuropeanWeatherSnapshot | null>(() =>
@@ -233,9 +283,14 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       if (map) {
         const roadPath = roadGeometries[target.mapId] || target.routeDef.coordinates;
         if (roadPath.length >= 2) {
-          map.fitBounds(L.latLngBounds(roadPath), { padding: [28, 28] });
+          map.fitBounds(L.latLngBounds(roadPath), { padding: [28, 28], animate: false });
         }
-        setTimeout(() => map.invalidateSize(), 100);
+        const t = setTimeout(() => {
+          if (mapInstanceRef.current === map && mapContainerRef.current?.isConnected) {
+            map.invalidateSize({ animate: false });
+          }
+        }, 100);
+        return () => clearTimeout(t);
       }
       return;
     }
@@ -254,9 +309,9 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         (it) => roadGeometries[it.mapId] || it.routeDef.coordinates
       );
       if (allPoints.length >= 2) {
-        map.flyToBounds(L.latLngBounds(allPoints), {
+        map.fitBounds(L.latLngBounds(allPoints), {
           padding: [28, 28],
-          duration: 0.55,
+          animate: false,
         });
       }
     }
@@ -386,8 +441,14 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     const map = L.map(mapContainerRef.current, {
       center: [50.2, 12.8],
       zoom: 5,
-      minZoom: 4,
+      minZoom: 2,
       maxZoom: 15,
+      worldCopyJump: true,
+      maxBounds: [
+        [-85, -360],
+        [85, 360],
+      ],
+      maxBoundsViscosity: 0.85,
       zoomControl: false,
       scrollWheelZoom: isFullScreen,
       doubleClickZoom: isFullScreen,
@@ -405,6 +466,28 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     mapInstanceRef.current = map;
     layerGroupRef.current = group;
     weatherLayerGroupRef.current = weatherGroup;
+
+    const syncViewportZoom = () => {
+      if (!mapInstanceRef.current || !mapContainerRef.current?.isConnected) return;
+      const z = map.getZoom();
+      const c = map.getCenter();
+      setMapViewMeta((prev) => {
+        if (
+          prev.zoom === z &&
+          Math.abs(prev.centerLat - c.lat) < 0.05 &&
+          Math.abs(prev.centerLng - c.lng) < 0.05
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          zoom: z,
+          centerLat: c.lat,
+          centerLng: c.lng,
+        };
+      });
+    };
+    map.on('zoomend moveend', syncViewportZoom);
 
     const targetItem = isSingle
       ? currentScopeItems[0]
@@ -433,6 +516,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           map.fitBounds(L.latLngBounds(roadPath), {
             paddingTopLeft: padTL,
             paddingBottomRight: padBR,
+            animate: false,
           });
         }
       } else if (currentScopeItems.length > 0) {
@@ -443,6 +527,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           map.fitBounds(L.latLngBounds(allPts), {
             paddingTopLeft: padTL,
             paddingBottomRight: padBR,
+            animate: false,
           });
         }
       } else {
@@ -453,6 +538,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         map.fitBounds(mainBounds, {
           paddingTopLeft: padTL,
           paddingBottomRight: padBR,
+          animate: false,
         });
       }
     };
@@ -461,13 +547,13 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
 
     const initTimer = setTimeout(() => {
       if (!mapInstanceRef.current || !mapContainerRef.current?.isConnected) return;
-      map.invalidateSize();
+      map.invalidateSize({ animate: false });
       fitCurrentScopeBounds();
     }, 120);
 
     const resizeObs = new ResizeObserver(() => {
       if (!mapInstanceRef.current || !mapContainerRef.current?.isConnected) return;
-      map.invalidateSize();
+      map.invalidateSize({ animate: false });
     });
     if (mapContainerRef.current) {
       resizeObs.observe(mapContainerRef.current);
@@ -476,13 +562,29 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     return () => {
       clearTimeout(initTimer);
       resizeObs.disconnect();
-      map.stop();
-      map.remove();
+      map.off();
+      try {
+        map.stop();
+        map.remove();
+      } catch {
+        // Guard Leaflet teardown race on rapid navigation away from Control Center
+      }
       mapInstanceRef.current = null;
       layerGroupRef.current = null;
       weatherLayerGroupRef.current = null;
     };
   }, [isFullScreen]);
+
+  // Real-time Astronomical Day / Night Solar Terminator Overlay across the Globe
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !showDayNight) return;
+
+    const detachTerminator = attachSolarTerminatorOverlay(map);
+    return () => {
+      detachTerminator();
+    };
+  }, [showDayNight, isFullScreen]);
 
   // 100% Real Live RainViewer Doppler Radar ONLY (zero synthetic canvas lines or fake rain streaks)
   useEffect(() => {
@@ -513,11 +615,17 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       pane.style.pointerEvents = 'none';
     }
 
-    const getSvgWeatherPin = (kind: AppleWeatherType) => {
+    const getSvgWeatherPin = (kind: AppleWeatherType, isNight = false) => {
       if (kind === 'sun') {
+        if (isNight) {
+          return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10Z" fill="#FDE68A" stroke="#FBBF24" stroke-width="1.4" stroke-linejoin="round"/><circle cx="17.5" cy="6" r="1.2" fill="#FEF3C7"/></svg>`;
+        }
         return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5.5" fill="#FBBF24"/><g stroke="#F59E0B" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.9" y1="4.9" x2="6.7" y2="6.7"/><line x1="17.3" y1="17.3" x2="19.1" y2="19.1"/><line x1="19.1" y1="4.9" x2="17.3" y2="6.7"/><line x1="6.7" y1="17.3" x2="4.9" y2="19.1"/></g></svg>`;
       }
       if (kind === 'partly-cloudy') {
+        if (isNight) {
+          return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M13.6 9.6A4.5 4.5 0 0 1 7.6 3.6a4.5 4.5 0 1 0 6 6Z" fill="#FDE68A"/><path d="M9.2 18.5H17.4C19.6 18.5 21.4 16.8 21.4 14.6C21.4 12.6 19.9 11 18 10.8C17.3 8.3 15 6.5 12.3 6.5C9.2 6.5 6.7 8.8 6.4 11.8C4.7 12.2 3.5 13.7 3.5 15.5C3.5 17.2 4.8 18.5 6.5 18.5H9.2Z" fill="#93C5FD"/></svg>`;
+        }
         return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="9" r="3.8" fill="#FBBF24"/><path d="M9.2 18.5H17.4C19.6 18.5 21.4 16.8 21.4 14.6C21.4 12.6 19.9 11 18 10.8C17.3 8.3 15 6.5 12.3 6.5C9.2 6.5 6.7 8.8 6.4 11.8C4.7 12.2 3.5 13.7 3.5 15.5C3.5 17.2 4.8 18.5 6.5 18.5H9.2Z" fill="#93C5FD"/></svg>`;
       }
       if (kind === 'snow') {
@@ -556,17 +664,62 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         };
       });
 
-      const mapStations = liveWeatherSnap.stations.filter(
+      // At global world zoom (<= 3), keep continents & terminator clean without overlapping European text callouts
+      if (currentZoom <= 3) {
+        return;
+      }
+
+      const routeCitiesSet = new Set(
+        currentScopeItems.flatMap((it) =>
+          [
+            ...(it.trailer?.routeSummary || []),
+            ...it.routeDef.checkpoints.map((cp) => cp.city),
+          ].map((c) =>
+            c
+              .toLowerCase()
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .trim()
+          )
+        )
+      );
+
+      const candidateStations = liveWeatherSnap.stations.filter(
         (st) =>
           Boolean(st.pillAnchor) &&
           currentZoom >= (st.minZoomForPill ?? 0)
       );
+
+      const mapStations =
+        cleanCompactHud && !isFullScreen
+          ? candidateStations.filter((st) => {
+              const norm = st.city
+                .toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .trim();
+              return (
+                routeCitiesSet.has(norm) ||
+                routeCitiesSet.has(norm === 'budapest' ? 'budapesta' : norm) ||
+                routeCitiesSet.has(norm === 'vienna' ? 'viena' : norm) ||
+                (norm === 'budapesta' && routeCitiesSet.has('budapesta')) ||
+                (norm === 'viena' && routeCitiesSet.has('viena')) ||
+                (norm === 'koln' && (routeCitiesSet.has('koln') || routeCitiesSet.has('köln')))
+              );
+            })
+          : candidateStations;
+
+      const placedBoxes: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
 
       mapStations.forEach((st) => {
         // 100% exact geographic coordinates of the city (NEVER offset in degrees)
         const exactCityCoords: [number, number] = [st.lat, st.lng];
         const pt = map.latLngToContainerPoint(exactCityCoords);
         const mapSize = map.getSize();
+        // Avoid overlapping top map controls bar
+        if (pt.y < 52 || pt.y > mapSize.y - 14 || pt.x < 18 || pt.x > mapSize.x - 18) {
+          return;
+        }
         let anchor = st.pillAnchor || 'top';
 
         // Viewport-edge protection on narrow mobile screens (keeps pinpoint dead-on [lat, lng])
@@ -574,6 +727,17 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           anchor = 'bottom';
         } else if (anchor === 'right' && pt.x > mapSize.x - 148) {
           anchor = 'bottom';
+        } else if (anchor === 'top' && pt.y < 76) {
+          anchor = 'bottom';
+        }
+
+        if (cleanCompactHud && !isFullScreen) {
+          const box = { x1: pt.x - 32, y1: pt.y - 24, x2: pt.x + 32, y2: pt.y + 18 };
+          const overlaps = placedBoxes.some(
+            (b) => !(box.x2 < b.x1 || box.x1 > b.x2 || box.y2 < b.y1 || box.y1 > b.y2)
+          );
+          if (overlaps) return;
+          placedBoxes.push(box);
         }
 
         const roundedTemp = Math.round(st.tempC);
@@ -583,6 +747,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           st.weatherType !== 'snow' &&
           st.windSpeedKmh >= 20;
         const pinKind: AppleWeatherType = isBreezyDry ? 'wind' : st.weatherType;
+        const cityIsNight = isNightAtCoords(st.lat, st.lng, liveSubsolar);
         const detailLabel = isBreezyDry
           ? `${Math.round(st.windSpeedKmh)} km/h`
           : st.weatherDescRo;
@@ -595,7 +760,9 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
               : pinKind === 'wind'
                 ? '#0ea5e9'
                 : pinKind === 'sun'
-                  ? '#f59e0b'
+                  ? cityIsNight
+                    ? '#818cf8'
+                    : '#f59e0b'
                   : 'rgba(148, 163, 184, 0.9)';
 
         const topShiftPct =
@@ -668,8 +835,12 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                   pointer-events:none;
                 "
               >
-                ${getSvgWeatherPin(pinKind)}
-                <span style="color:#ffffff;">${st.city} ${tempLabel} · ${detailLabel}</span>
+                ${getSvgWeatherPin(pinKind, cityIsNight)}
+                <span style="color:#ffffff;">${
+                  cleanCompactHud && !isFullScreen
+                    ? tempLabel
+                    : `${st.city} ${tempLabel} · ${detailLabel}`
+                }</span>
               </div>
             </div>
           `,
@@ -688,7 +859,9 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     return () => {
       map.off('zoomend moveend', renderWeatherPills);
     };
-  }, [showWeatherRadar, isFullScreen, liveWeatherSnap]);
+  }, [showWeatherRadar, isFullScreen, liveWeatherSnap, liveSubsolar, cleanCompactHud, currentScopeItems]);
+
+  const isGlobeOverview = mapViewMeta.zoom <= 3;
 
   // Render Real Road Corridors, Checkpoints, Swap Hubs, and Status-Aware Truck Markers
   useEffect(() => {
@@ -744,7 +917,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       }).addTo(group);
 
       // 3. Checkpoint City Dots along the highlighted route (10px dot centered dead-on cp.coords)
-      if (isHighlighted) {
+      if (isHighlighted && !isGlobeOverview) {
         route.checkpoints.forEach((cp) => {
           const dotIcon = L.divIcon({
             className: 'custom-cp-dot',
@@ -824,8 +997,21 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
 
       const truckIcon = L.divIcon({
         className: 'custom-truck-marker',
-        html: isHighlighted
+        html: isGlobeOverview
           ? `
+          <div style="
+            transform:translate(-5px, -5px);
+            width:10px;
+            height:10px;
+            border-radius:9999px;
+            background:${pinBg};
+            border:1.5px solid #ffffff;
+            box-shadow:0 0 8px ${pinBg};
+            cursor:pointer;
+          " title="${plateDisplay} · ${item.routeSummaryText}"></div>
+        `
+          : isHighlighted
+            ? `
           <div style="
             display:flex;
             align-items:center;
@@ -930,8 +1116,8 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       });
     });
 
-    // 5. Smart Trailer Swap Hubs & Idle Fleet Pins ONLY in Active overview (never in Trecute)
-    if (effectiveScope === 'active' && !isSingle) {
+    // 5. Smart Trailer Swap Hubs & Idle Fleet Pins ONLY in Active European overview (never in Trecute or Globe overview)
+    if (effectiveScope === 'active' && !isSingle && !isGlobeOverview) {
       SWAP_HUBS.forEach((hub) => {
         const swapIcon = L.divIcon({
           className: 'custom-swap-marker',
@@ -965,7 +1151,10 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
       });
 
       if (focusedMapId === 'ALL') {
-        MOCK_FLEET_POSITIONS.forEach((v) => {
+        const liveOverrideByPlate = new Map(
+          (liveFleetPositions || []).map((p) => [p.plate, p])
+        );
+        MOCK_FLEET_POSITIONS.map((v) => liveOverrideByPlate.get(v.plate) || v).forEach((v) => {
           if (activePlatesOnMap.has(v.plate)) return;
           const fleetIcon = L.divIcon({
             className: 'custom-fleet-marker',
@@ -986,7 +1175,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                 white-space:nowrap;
                 box-shadow:0 2px 8px rgba(0,0,0,0.45);
                 cursor:pointer;
-              " title="${v.plate} — ${v.place} (fără cursă activă)">
+              " title="${v.plate} — ${v.place}">
                 <span style="width:9px;height:9px;border-radius:9999px;background:#94a3b8;display:inline-block;"></span>
                 <span style="color:#ffffff;">${v.plate}</span>
               </div>
@@ -1006,7 +1195,35 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     roadGeometries,
     onNavigateSwap,
     isFullScreen,
+    isGlobeOverview,
+    liveFleetPositions,
   ]);
+
+  const handleToggleGlobeView = () => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (map.getZoom() <= 3) {
+      const allPts = currentScopeItems.flatMap(
+        (it) => roadGeometries[it.mapId] || it.routeDef.coordinates
+      );
+      if (allPts.length >= 2) {
+        map.flyToBounds(L.latLngBounds(allPts), {
+          padding: [28, 28],
+          duration: 0.75,
+        });
+      } else {
+        map.flyTo([50.2, 12.8], 5, { duration: 0.75 });
+      }
+      return;
+    }
+
+    if (!showDayNight) {
+      setShowDayNight(true);
+    }
+    const isNarrowMobile = (mapContainerRef.current?.clientWidth || 960) < 640;
+    map.flyTo(isNarrowMobile ? [26, -18] : [24, 5], 2, { duration: 0.75 });
+  };
 
   const handleFocusCorridor = (mapId: string) => {
     setFocusedMapId(mapId);
@@ -1039,9 +1256,24 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
     }
   };
 
-  const renderAppleWeatherIcon = (type: AppleWeatherType) => {
+  const renderAppleWeatherIcon = (type: AppleWeatherType, isNight = false) => {
     switch (type) {
       case 'sun':
+        if (isNight) {
+          return (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
+              <path
+                d="M19.6 14.6A7.6 7.6 0 0 1 9.4 4.4a7.6 7.6 0 1 0 10.2 10.2Z"
+                fill="#FDE68A"
+                stroke="#FBBF24"
+                strokeWidth="1.4"
+                strokeLinejoin="round"
+              />
+              <circle cx="17.5" cy="5.8" r="1.25" fill="#FEF3C7" />
+              <circle cx="14.2" cy="8.5" r="0.85" fill="#E0E7FF" />
+            </svg>
+          );
+        }
         return (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
             <circle cx="12" cy="12" r="5.5" fill="#F59E0B" />
@@ -1059,6 +1291,25 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           </svg>
         );
       case 'partly-cloudy':
+        if (isNight) {
+          return (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
+              <path
+                d="M13.8 9.6A4.6 4.6 0 0 1 7.6 3.4a4.6 4.6 0 1 0 6.2 6.2Z"
+                fill="#FDE68A"
+                stroke="#FBBF24"
+                strokeWidth="1.1"
+              />
+              <path
+                d="M9.5 18.5H17.5C19.7 18.5 21.5 16.8 21.5 14.6C21.5 12.6 20 11 18.1 10.8C17.4 8.3 15.1 6.5 12.4 6.5C9.3 6.5 6.8 8.8 6.5 11.8C4.8 12.2 3.5 13.7 3.5 15.5C3.5 17.2 4.9 18.5 6.6 18.5H9.5Z"
+                fill="#60A5FA"
+                fillOpacity="0.92"
+                stroke="#3B82F6"
+                strokeWidth="1"
+              />
+            </svg>
+          );
+        }
         return (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
             <circle cx="9" cy="9" r="4" fill="#F59E0B" />
@@ -1201,13 +1452,14 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
   }, [showWeatherRadar, liveWeatherSnap, mapViewMeta]);
 
   const renderHudStationIcon = (st: NonNullable<typeof liveWeatherSnap>['stations'][number]) => {
+    const stationIsNight = isNightAtCoords(st.lat, st.lng, liveSubsolar);
     const isBreezyDry =
       st.weatherType !== 'rain' &&
       st.weatherType !== 'snow' &&
       st.windSpeedKmh >= 20;
-    if (isBreezyDry) return renderAppleWeatherIcon('wind');
+    if (isBreezyDry) return renderAppleWeatherIcon('wind', stationIsNight);
     if (st.weatherType === 'rain' || st.weatherType === 'snow' || st.weatherType === 'sun') {
-      return renderAppleWeatherIcon(st.weatherType);
+      return renderAppleWeatherIcon(st.weatherType, stationIsNight);
     }
     const descNorm = st.weatherDescRo.toLowerCase();
     if (descNorm.includes('ceață') || descNorm.includes('ceata')) {
@@ -1241,11 +1493,11 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
         </svg>
       );
     }
-    return renderAppleWeatherIcon('partly-cloudy');
+    return renderAppleWeatherIcon('partly-cloudy', stationIsNight);
   };
 
   const renderWeatherCitiesHud = () => {
-    if (!showWeatherRadar || hudWeatherStations.length === 0) return null;
+    if ((cleanCompactHud && !isFullScreen) || !showWeatherRadar || hudWeatherStations.length === 0) return null;
 
     const focusStationOnMap = (lat: number, lng: number) => {
       const map = mapInstanceRef.current;
@@ -1389,90 +1641,159 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
   };
 
   const renderMapControlsBar = () => (
-    <div className="absolute top-2.5 left-2.5 right-2.5 sm:left-auto sm:top-3 sm:right-3 z-[450] flex items-center justify-end gap-1 sm:gap-1.5">
-      <button
-        type="button"
-        onClick={() => setShowWeatherRadar((prev) => !prev)}
-        aria-pressed={showWeatherRadar}
-        aria-label="Comută radar meteo pe hartă"
-        className="px-2 sm:px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 flex items-center gap-1.5 sm:gap-2 shadow-lg cursor-pointer transition shrink-0"
-        style={{
-          backgroundColor: 'rgba(15, 23, 42, 0.92)',
-          color: '#ffffff',
-        }}
-        title="Comută Radar Vreme (Ploaie, Ninsoare & Vânt) pe Hartă"
-      >
-        <span className="inline-flex items-center gap-1">
-          {renderAppleWeatherIcon('rain')}
-          {renderAppleWeatherIcon('wind')}
-        </span>
-        <span
-          className="relative inline-flex items-center w-8 h-4 rounded-full transition-colors duration-200 p-0.5"
+    <div className="absolute top-2.5 left-2 right-2 sm:left-auto sm:top-3 sm:right-3 z-[450] flex items-center justify-between sm:justify-end gap-1 sm:gap-1.5">
+      <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+        <button
+          type="button"
+          onClick={handleToggleGlobeView}
+          aria-pressed={isGlobeOverview}
+          aria-label={isGlobeOverview ? 'Revino la coridorul din Europa' : 'Vezi unde este zi și noapte pe tot globul'}
+          className="h-8 px-2.5 sm:h-auto sm:px-3 sm:py-1.5 rounded-full backdrop-blur-md border text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 sm:gap-1.5 shadow-lg cursor-pointer transition shrink-0 whitespace-nowrap"
           style={{
-            backgroundColor: showWeatherRadar ? '#30D158' : 'rgba(100, 116, 139, 0.75)',
+            backgroundColor: isGlobeOverview
+              ? 'rgba(10, 132, 255, 0.94)'
+              : 'rgba(15, 23, 42, 0.92)',
+            borderColor: isGlobeOverview
+              ? 'rgba(125, 211, 252, 0.7)'
+              : 'rgba(255, 255, 255, 0.25)',
+            color: '#ffffff',
           }}
+          title={
+            isGlobeOverview
+              ? 'Revino la vederea pe Coridorul European'
+              : 'Vedere pe Glob (Zi / Noapte în timp real pe Pământ)'
+          }
         >
+          <Globe
+            className="w-3.5 h-3.5 shrink-0"
+            style={{ color: isGlobeOverview ? '#ffffff' : '#38bdf8' }}
+            aria-hidden="true"
+          />
+          <span style={{ color: '#ffffff' }}>
+            {isGlobeOverview ? 'Coridor' : 'Glob'}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowDayNight((prev) => !prev)}
+          aria-pressed={showDayNight}
+          aria-label="Comută umbra Zi / Noapte pe glob"
+          className="h-8 px-2 sm:h-auto sm:px-2.5 sm:py-1.5 rounded-full backdrop-blur-md border flex items-center justify-center gap-1 sm:gap-1.5 shadow-lg cursor-pointer transition shrink-0"
+          style={{
+            backgroundColor: 'rgba(15, 23, 42, 0.92)',
+            borderColor: showDayNight
+              ? 'rgba(251, 191, 36, 0.55)'
+              : 'rgba(255, 255, 255, 0.25)',
+            color: '#ffffff',
+          }}
+          title="Comută Umbra Zi / Noapte (Terminator Solar Live pe Glob)"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" stroke="#94A3B8" strokeWidth="1.5" fill="rgba(15,23,42,0.8)" />
+            <path d="M12 3.5A8.5 8.5 0 0 0 12 20.5Z" fill="#FBBF24" />
+            <path d="M15.6 14.3A3.8 3.8 0 0 1 12.8 9.2a3.6 3.6 0 1 0 2.8 5.1Z" fill="#E0E7FF" />
+          </svg>
           <span
-            className="w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-200"
+            aria-hidden="true"
+            className="w-2 h-2 rounded-full transition-colors shrink-0"
             style={{
-              transform: showWeatherRadar ? 'translateX(16px)' : 'translateX(0px)',
+              backgroundColor: showDayNight ? '#30D158' : 'rgba(100, 116, 139, 0.75)',
+              boxShadow: showDayNight ? '0 0 6px #30D158' : 'none',
             }}
           />
-        </span>
-      </button>
+        </button>
 
-      <button
-        type="button"
-        onClick={handleZoomIn}
-        aria-label="Mărește harta"
-        className="px-2.5 sm:px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1 shadow-lg cursor-pointer shrink-0 whitespace-nowrap"
-        style={{
-          backgroundColor: 'rgba(15, 23, 42, 0.92)',
-          color: '#ffffff',
-        }}
-      >
-        <ZoomIn className="w-3.5 h-3.5" style={{ color: '#4ade80' }} aria-hidden="true" />
-        <span style={{ color: '#ffffff' }}>+</span>
-      </button>
+        <button
+          type="button"
+          onClick={() => setShowWeatherRadar((prev) => !prev)}
+          aria-pressed={showWeatherRadar}
+          aria-label="Comută radar meteo pe hartă"
+          className="h-8 px-2 sm:h-auto sm:px-3 sm:py-1.5 rounded-full backdrop-blur-md border border-white/25 flex items-center gap-1 sm:gap-2 shadow-lg cursor-pointer transition shrink-0"
+          style={{
+            backgroundColor: 'rgba(15, 23, 42, 0.92)',
+            color: '#ffffff',
+          }}
+          title="Comută Radar Vreme (Ploaie, Ninsoare & Vânt) pe Hartă"
+        >
+          <span className="inline-flex items-center gap-1">
+            {renderAppleWeatherIcon('rain')}
+            <span className="hidden sm:inline-flex">{renderAppleWeatherIcon('wind')}</span>
+          </span>
+          <span
+            className="relative inline-flex items-center w-7 sm:w-8 h-4 rounded-full transition-colors duration-200 p-0.5"
+            style={{
+              backgroundColor: showWeatherRadar ? '#30D158' : 'rgba(100, 116, 139, 0.75)',
+            }}
+          >
+            <span
+              className="w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-200"
+              style={{
+                transform: showWeatherRadar ? 'translateX(13px)' : 'translateX(0px)',
+              }}
+            />
+          </span>
+        </button>
+      </div>
 
-      <button
-        type="button"
-        onClick={handleZoomOut}
-        aria-label="Micșorează harta"
-        className="px-2.5 sm:px-3 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1 shadow-lg cursor-pointer shrink-0 whitespace-nowrap"
-        style={{
-          backgroundColor: 'rgba(15, 23, 42, 0.92)',
-          color: '#ffffff',
-        }}
-      >
-        <ZoomOut className="w-3.5 h-3.5" style={{ color: '#38bdf8' }} aria-hidden="true" />
-        <span style={{ color: '#ffffff' }}>−</span>
-      </button>
+      <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          aria-label="Mărește harta"
+          className={`${
+            cleanCompactHud && !isFullScreen ? 'hidden sm:flex' : 'flex'
+          } w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold items-center justify-center gap-1 shadow-lg cursor-pointer shrink-0 whitespace-nowrap`}
+          style={{
+            backgroundColor: 'rgba(15, 23, 42, 0.92)',
+            color: '#ffffff',
+          }}
+        >
+          <ZoomIn className="w-3.5 h-3.5" style={{ color: '#4ade80' }} aria-hidden="true" />
+          <span className="hidden sm:inline" style={{ color: '#ffffff' }}>+</span>
+        </button>
 
-      <button
-        type="button"
-        onClick={handleToggleFullScreen}
-        aria-label={isFullScreen ? 'Închide harta pe tot ecranul' : 'Deschide harta pe tot ecranul'}
-        className="px-2.5 sm:px-3.5 py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer shrink-0 whitespace-nowrap"
-        style={{
-          backgroundColor: isFullScreen
-            ? 'rgba(239, 68, 68, 0.95)'
-            : 'rgba(15, 23, 42, 0.92)',
-          color: '#ffffff',
-        }}
-      >
-        {isFullScreen ? (
-          <>
-            <Minimize2 className="w-3.5 h-3.5 shrink-0" style={{ color: '#ffffff' }} aria-hidden="true" />
-            <span style={{ color: '#ffffff' }}>Închide</span>
-          </>
-        ) : (
-          <>
-            <Maximize2 className="w-3.5 h-3.5 shrink-0" style={{ color: '#38bdf8' }} aria-hidden="true" />
-            <span className="hidden min-[360px]:inline" style={{ color: '#ffffff' }}>Full Screen</span>
-          </>
-        )}
-      </button>
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          aria-label="Micșorează harta"
+          className={`${
+            cleanCompactHud && !isFullScreen ? 'hidden sm:flex' : 'flex'
+          } w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold items-center justify-center gap-1 shadow-lg cursor-pointer shrink-0 whitespace-nowrap`}
+          style={{
+            backgroundColor: 'rgba(15, 23, 42, 0.92)',
+            color: '#ffffff',
+          }}
+        >
+          <ZoomOut className="w-3.5 h-3.5" style={{ color: '#38bdf8' }} aria-hidden="true" />
+          <span className="hidden sm:inline" style={{ color: '#ffffff' }}>−</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handleToggleFullScreen}
+          aria-label={isFullScreen ? 'Închide harta pe tot ecranul' : 'Deschide harta pe tot ecranul'}
+          className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3.5 sm:py-1.5 rounded-full backdrop-blur-md border border-white/25 text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-lg cursor-pointer shrink-0 whitespace-nowrap"
+          style={{
+            backgroundColor: isFullScreen
+              ? 'rgba(239, 68, 68, 0.95)'
+              : 'rgba(15, 23, 42, 0.92)',
+            color: '#ffffff',
+          }}
+        >
+          {isFullScreen ? (
+            <>
+              <Minimize2 className="w-3.5 h-3.5 shrink-0" style={{ color: '#ffffff' }} aria-hidden="true" />
+              <span className="hidden sm:inline" style={{ color: '#ffffff' }}>Închide</span>
+            </>
+          ) : (
+            <>
+              <Maximize2 className="w-3.5 h-3.5 shrink-0" style={{ color: '#38bdf8' }} aria-hidden="true" />
+              <span className="hidden sm:inline" style={{ color: '#ffffff' }}>Full Screen</span>
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 
@@ -1568,22 +1889,28 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
   return (
     <div
       className={
-        singleTripMode
-          ? 'space-y-3'
-          : 'tahoe-glass rounded-[28px] p-4 sm:p-5 space-y-4'
+        embeddedInCard
+          ? 'w-full'
+          : singleTripMode
+            ? 'space-y-3'
+            : 'tahoe-glass rounded-[28px] p-4 sm:p-5 space-y-4'
       }
     >
       <div className="flex flex-col gap-3.5">
         {/* ROW 1: Full-Width Interactive Leaflet Map Container */}
         <div
           ref={mapHostWrapperRef}
-          className={`w-full shrink-0 min-w-0 relative rounded-[22px] overflow-hidden border border-white/15 shadow-2xl ${
-            singleTripMode
-              ? 'h-[300px] sm:h-[340px]'
-              : 'h-[370px] sm:h-[470px] lg:h-[500px]'
+          className={`w-full shrink-0 min-w-0 relative overflow-hidden ${
+            embeddedInCard
+              ? `${heightClass}`
+              : `rounded-[22px] border border-white/15 shadow-2xl ${
+                  singleTripMode
+                    ? 'h-[300px] sm:h-[340px]'
+                    : 'h-[370px] sm:h-[470px] lg:h-[500px]'
+                }`
           }`}
           style={{
-            minHeight: singleTripMode ? '300px' : '370px',
+            minHeight: embeddedInCard ? '210px' : singleTripMode ? '300px' : '370px',
             contain: 'layout style paint',
           }}
         >
@@ -1592,29 +1919,43 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
             className="w-full h-full z-0"
             style={{
               height: '100%',
-              minHeight: singleTripMode ? '300px' : '370px',
+              minHeight: embeddedInCard ? '210px' : singleTripMode ? '300px' : '370px',
             }}
           />
 
           {renderMapControlsBar()}
           {renderWeatherCitiesHud()}
 
-          {/* Compact Bottom-Left Highway Corridor Pill */}
+          {/* Compact Bottom-Left Highway Corridor + Live Day/Night Pill */}
+          {!cleanCompactHud && (
           <div
             className={`${
               showWeatherRadar ? 'hidden sm:inline-flex' : 'inline-flex'
-            } absolute bottom-3 left-3 z-[400] px-3 py-1.5 rounded-full backdrop-blur-md border border-white/20 items-center gap-1.5 text-[11px] font-semibold shadow-lg pointer-events-none select-none`}
+            } absolute bottom-3 left-3 z-[400] px-3 py-1.5 rounded-full backdrop-blur-md border border-white/20 items-center gap-2 text-[11px] font-semibold shadow-lg pointer-events-none select-none`}
             style={{
               backgroundColor: 'rgba(15, 23, 42, 0.92)',
               color: '#ffffff',
             }}
           >
-            <span aria-hidden="true" className="w-2.5 h-2.5 rounded-full bg-[#38bdf8] shrink-0" />
-            <span style={{ color: '#ffffff' }}>Traseu Rutier Camioane</span>
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true" className="w-2.5 h-2.5 rounded-full bg-[#38bdf8] shrink-0" />
+              <span style={{ color: '#ffffff' }}>Traseu Rutier Camioane</span>
+            </span>
+            {showDayNight && (
+              <>
+                <span aria-hidden="true" style={{ color: 'rgba(148, 163, 184, 0.65)' }}>·</span>
+                <span className="inline-flex items-center gap-1" style={{ color: '#fde68a' }}>
+                  <span aria-hidden="true" className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_5px_#fbbf24] shrink-0" />
+                  <span style={{ color: '#fde68a' }}>Zi / Noapte Live</span>
+                </span>
+              </>
+            )}
           </div>
+          )}
         </div>
 
         {/* ROW 2: Two Side-by-Side Cards Below the Map (Trips Selector + Route Checkpoints) */}
+        {!hideRouteDetailsBelow && (
         <div
           className={
             singleTripMode
@@ -1831,6 +2172,17 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
             </div>
 
             {/* Technical Distance & Transit Period Summary Box */}
+            {(() => {
+              const mapProfile = resolveHgvVehicleProfile(activeTrailerObj?.totalLdm ?? 13.6);
+              const remainingMapKm = Math.max(
+                0,
+                activeRouteDef.totalTechKm - activeRouteDef.drivenKm
+              );
+              const mapHgvMetrics = computeHgvRouteMetrics(remainingMapKm, {
+                isHgv: mapProfile.isHgv,
+                isDoubleCrew: Boolean(activeTrailerObj?.isDoubleCrew),
+              });
+              return (
             <div className="rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2 space-y-1">
               <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] tabular-nums">
                 <span className="font-bold text-white">
@@ -1846,25 +2198,24 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                     <>
                       Rămas:{' '}
                       <strong className="text-white">
-                        {(activeRouteDef.totalTechKm - activeRouteDef.drivenKm).toLocaleString(
-                          'ro-RO'
-                        )}{' '}
-                        km
+                        {remainingMapKm.toLocaleString('ro-RO')} km
                       </strong>{' '}
-                      ({activeRouteDef.estDriveHours})
+                      ({mapHgvMetrics.compactDriveLabel})
                     </>
                   )}
                 </span>
               </div>
               <div className="text-[10px] text-white/60 tabular-nums flex items-center justify-between gap-2 min-w-0">
                 <span className="truncate min-w-0">
-                  Program: <strong>{activeRouteDef.transitWindow}</strong>
+                  {mapProfile.shortBadge} · <strong>{activeRouteDef.transitWindow}</strong>
                 </span>
                 <span className="text-[#30D158] font-bold shrink-0">
                   Parcurs: {activeRouteDef.drivenKm.toLocaleString('ro-RO')} km
                 </span>
               </div>
             </div>
+              );
+            })()}
 
             {/* Route Checkpoints */}
             <div
@@ -1924,7 +2275,10 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
                           title={`${cp.city} (LIVE ${liveStation.observedAt || 'acum'}): ${Math.round(liveStation.tempC) > 0 ? `+${Math.round(liveStation.tempC)}` : Math.round(liveStation.tempC)}°C · ${liveStation.weatherDescRo} · Vânt ${Math.round(liveStation.windSpeedKmh)} km/h`}
                           aria-label={`Vreme live ${cp.city}: ${Math.round(liveStation.tempC) > 0 ? `+${Math.round(liveStation.tempC)}` : Math.round(liveStation.tempC)}°C, ${liveStation.weatherDescRo}`}
                         >
-                          {renderAppleWeatherIcon(liveStation.weatherType)}
+                          {renderAppleWeatherIcon(
+                            liveStation.weatherType,
+                            isNightAtCoords(liveStation.lat, liveStation.lng, liveSubsolar)
+                          )}
                           <span className="text-[10.5px] font-extrabold text-white tabular-nums">
                             {Math.round(liveStation.tempC) > 0
                               ? `+${Math.round(liveStation.tempC)}`
@@ -1993,6 +2347,7 @@ export const EuropeLiveMap: React.FC<EuropeLiveMapProps> = ({
           </div>
         </div>
         </div>
+        )}
       </div>
     </div>
   );

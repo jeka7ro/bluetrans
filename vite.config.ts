@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 // @ts-expect-error shared Node ESM auth handler
 import { handleAuthApiRequest, resolveDefaultAuthDbPath } from './authServer.mjs'
+// @ts-expect-error shared Node ESM TMS engine handler
+import { handleTmsApiRequest } from './tmsServer.mjs'
 
 interface ActeFlotaIndexEntry {
   fileName: string
@@ -214,6 +216,9 @@ function acteFlotaSyncPlugin(): Plugin {
 
       server.middlewares.use((req, res, next) => {
         if (handleAuthApiRequest(req, res, authDbPath)) {
+          return
+        }
+        if (handleTmsApiRequest(req, res, process.cwd(), authDbPath)) {
           return
         }
 
@@ -550,6 +555,24 @@ export default defineConfig({
     __APP_BUILD_ISO__: JSON.stringify(BUILD_META.buildIso),
   },
   plugins: [react(), tailwindcss(), acteFlotaSyncPlugin()],
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('/three/')) return 'vendor-three'
+          if (id.includes('/leaflet/')) return 'vendor-leaflet'
+          if (id.includes('/temporal-polyfill/')) return 'vendor-temporal'
+          if (id.includes('/lucide-react/')) return 'vendor-icons'
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+            return 'vendor-react'
+          }
+          return undefined
+        },
+      },
+    },
+  },
   server: {
     host: '0.0.0.0',
     port: 3645,

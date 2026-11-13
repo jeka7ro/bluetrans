@@ -33,19 +33,21 @@ export interface PrintableTripDocData {
 interface CmrAndInvoiceModalProps {
   docData: PrintableTripDocData | null;
   onClose: () => void;
+  hideInvoice?: boolean;
 }
 
 export const CmrAndInvoiceModal: React.FC<CmrAndInvoiceModalProps> = ({
   docData,
   onClose,
+  hideInvoice = false,
 }) => {
   const [activeDocTab, setActiveDocTab] = useState<'CMR' | 'INVOICE'>(
-    docData?.docType || 'CMR'
+    hideInvoice ? 'CMR' : docData?.docType || 'CMR'
   );
 
   useEffect(() => {
     if (docData) {
-      setActiveDocTab(docData.docType);
+      setActiveDocTab(hideInvoice ? 'CMR' : docData.docType);
       document.body.classList.add('modal-scroll-locked');
       document.body.style.overflow = 'hidden';
     } else {
@@ -56,7 +58,7 @@ export const CmrAndInvoiceModal: React.FC<CmrAndInvoiceModalProps> = ({
       document.body.classList.remove('modal-scroll-locked');
       document.body.style.overflow = '';
     };
-  }, [docData]);
+  }, [docData, hideInvoice]);
 
   if (!docData) return null;
 
@@ -81,6 +83,7 @@ export const CmrAndInvoiceModal: React.FC<CmrAndInvoiceModalProps> = ({
             aria-label="Tip document transport"
             className="min-w-0 flex-1 grid grid-cols-2 gap-1.5 sm:flex sm:items-center sm:gap-2 sm:flex-nowrap sm:overflow-x-auto no-scrollbar"
             onKeyDown={(e) => {
+              if (hideInvoice) return;
               if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
               e.preventDefault();
               const next = activeDocTab === 'CMR' ? 'INVOICE' : 'CMR';
@@ -108,23 +111,25 @@ export const CmrAndInvoiceModal: React.FC<CmrAndInvoiceModalProps> = ({
               <span className="sm:hidden truncate">CMR</span>
               <span className="hidden sm:inline">Scrisoare CMR Internațional</span>
             </button>
-            <button
-              id="cmr-modal-tab-invoice"
-              type="button"
-              role="tab"
-              data-doc-tab="INVOICE"
-              aria-selected={activeDocTab === 'INVOICE'}
-              tabIndex={activeDocTab === 'INVOICE' ? 0 : -1}
-              onClick={(e) => {
-                setActiveDocTab('INVOICE');
-                e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-              }}
-              className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-2 sm:px-4 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-extrabold whitespace-nowrap sm:shrink-0 flex items-center justify-center gap-1 sm:gap-1.5 transition cursor-pointer tahoe-btn-secondary text-white/85"
-            >
-              <Receipt className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-              <span className="sm:hidden truncate">Factură</span>
-              <span className="hidden sm:inline">Factură Proformă / Fiscală (EUR)</span>
-            </button>
+            {!hideInvoice && (
+              <button
+                id="cmr-modal-tab-invoice"
+                type="button"
+                role="tab"
+                data-doc-tab="INVOICE"
+                aria-selected={activeDocTab === 'INVOICE'}
+                tabIndex={activeDocTab === 'INVOICE' ? 0 : -1}
+                onClick={(e) => {
+                  setActiveDocTab('INVOICE');
+                  e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                }}
+                className="min-w-0 w-full sm:w-auto min-h-[38px] sm:min-h-0 px-2 sm:px-4 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-extrabold whitespace-nowrap sm:shrink-0 flex items-center justify-center gap-1 sm:gap-1.5 transition cursor-pointer tahoe-btn-secondary text-white/85"
+              >
+                <Receipt className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                <span className="sm:hidden truncate">Factură</span>
+                <span className="hidden sm:inline">Factură Proformă / Fiscală (EUR)</span>
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
@@ -340,7 +345,7 @@ export const CmrAndInvoiceModal: React.FC<CmrAndInvoiceModalProps> = ({
         {/* =================================================================
             VIEW 2: PROFORMA / FISCAL INVOICE (EUR)
         ================================================================== */}
-        {activeDocTab === 'INVOICE' && (
+        {activeDocTab === 'INVOICE' && !hideInvoice && (
           <div className="tahoe-card-inner rounded-2xl p-5 border border-white/15 space-y-4 text-xs">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/15 pb-3.5">
               <div>

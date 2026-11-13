@@ -13,7 +13,9 @@ import {
   TRAILER_SWAP_SCENARIOS,
   TrailerSwapScenario,
   PostSwapAction,
+  TrailerUnit,
 } from '../data/mockData';
+import { scanFleetForSwapOpportunities } from '../utils/smartLogisticsEngine';
 import { EuroRoPlate } from './EuroRoPlate';
 
 const POST_SWAP_OPTIONS: { value: PostSwapAction; label: string; badge: string }[] = [
@@ -100,12 +102,32 @@ function getOneLineExplanation(scenario: TrailerSwapScenario): string {
   }
 }
 
-export const TrailerSwapView: React.FC = () => {
-  const [scenarios, setScenarios] = useState<TrailerSwapScenario[]>(
+interface TrailerSwapViewProps {
+  trailers?: TrailerUnit[];
+  scenarios?: TrailerSwapScenario[];
+  onChangeScenarios?: React.Dispatch<React.SetStateAction<TrailerSwapScenario[]>>;
+  onExecuteSwap?: (
+    scenario: TrailerSwapScenario,
+    actionA: PostSwapAction,
+    actionB: PostSwapAction,
+    meetingName: string
+  ) => void;
+}
+
+export const TrailerSwapView: React.FC<TrailerSwapViewProps> = ({
+  trailers = [],
+  scenarios: controlledScenarios,
+  onChangeScenarios,
+  onExecuteSwap,
+}) => {
+  const [localScenarios, setLocalScenarios] = useState<TrailerSwapScenario[]>(
     TRAILER_SWAP_SCENARIOS
   );
+  const scenarios = controlledScenarios ?? localScenarios;
+  const setScenarios = onChangeScenarios ?? setLocalScenarios;
+
   const [activeScenarioId, setActiveScenarioId] = useState<string>(
-    TRAILER_SWAP_SCENARIOS[0].id
+    scenarios[0]?.id || TRAILER_SWAP_SCENARIOS[0].id
   );
   const [tractorAActions, setTractorAActions] = useState<Record<string, PostSwapAction>>({
     'swap-1': 'ORADEA_BASE',
@@ -138,6 +160,25 @@ export const TrailerSwapView: React.FC = () => {
     (sum, s) => sum + s.financialImpact.netBenefitEur,
     0
   );
+
+  const handleScanLiveSwaps = () => {
+    if (trailers.length === 0) {
+      setBannerMessage('Flota nu are capete tractor active încărcate pentru scanare.');
+      return;
+    }
+    const discovered = scanFleetForSwapOpportunities(trailers, scenarios);
+    if (discovered.length === 0) {
+      setBannerMessage(
+        'Scanare completă CE 561/2006: toate oportunitățile viabile de schimb sunt deja în listă.'
+      );
+      return;
+    }
+    setScenarios((prev) => [...prev, ...discovered]);
+    setActiveScenarioId(discovered[0].id);
+    setBannerMessage(
+      `Cargo Track AI a detectat ${discovered.length} ${discovered.length === 1 ? 'oportunitate nouă' : 'oportunități noi'} de schimb / releu tahograf!`
+    );
+  };
 
   const handleToggleDriverConfirm = (tractorKey: 'tractorA' | 'tractorB') => {
     setBannerMessage(null);
@@ -181,6 +222,9 @@ export const TrailerSwapView: React.FC = () => {
       return;
     }
 
+    const actA = tractorAActions[activeScenario.id] || activeScenario.tractorA.defaultPostAction;
+    const actB = tractorBActions[activeScenario.id] || activeScenario.tractorB.defaultPostAction;
+
     setScenarios((prev) =>
       prev.map((s) =>
         s.id === activeScenario.id
@@ -188,18 +232,17 @@ export const TrailerSwapView: React.FC = () => {
           : s
       )
     );
+    onExecuteSwap?.(activeScenario, actA, actB, currentMeetingName);
 
     const plateA = extractPlate(activeScenario.tractorA.tractorId) || activeScenario.tractorA.tractorId;
     const plateB = extractPlate(activeScenario.tractorB.tractorId) || activeScenario.tractorB.tractorId;
     const optALabel =
-      POST_SWAP_OPTIONS.find((o) => o.value === tractorAActions[activeScenario.id])
-        ?.label || '';
+      POST_SWAP_OPTIONS.find((o) => o.value === actA)?.label || '';
     const optBLabel =
-      POST_SWAP_OPTIONS.find((o) => o.value === tractorBActions[activeScenario.id])
-        ?.label || '';
+      POST_SWAP_OPTIONS.find((o) => o.value === actB)?.label || '';
 
     setBannerMessage(
-      `Schimb aprobat la ${getShortMeetingPlace(activeScenario)}: ${plateA} (${optALabel.toLowerCase()}) · ${plateB} (${optBLabel.toLowerCase()}).`
+      `Schimb executat în Planning la ${getShortMeetingPlace(activeScenario)}: ${plateA} (${optALabel.toLowerCase()}) · ${plateB} (${optBLabel.toLowerCase()}).`
     );
   };
 
@@ -263,6 +306,15 @@ export const TrailerSwapView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2.5 text-[11px] sm:text-xs tabular-nums shrink-0">
+          {trailers.length > 0 && (
+            <button
+              type="button"
+              onClick={handleScanLiveSwaps}
+              className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-[#0A84FF]/20 text-[#64D2FF] border border-[#0A84FF]/40 hover:bg-[#0A84FF]/30 font-bold text-[11px] sm:text-xs cursor-pointer transition whitespace-nowrap"
+            >
+              Scanează Flota
+            </button>
+          )}
           <div className="tahoe-card-inner rounded-xl px-2 sm:px-3 py-1 sm:py-1.5 flex items-center gap-1 sm:gap-2">
             <span className="hidden sm:inline text-white/55">Timp câștigat:</span>
             <strong className="text-[#30D158] text-xs sm:text-sm font-extrabold">

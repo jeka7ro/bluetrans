@@ -10,10 +10,23 @@ import {
   Sparkles,
   ShieldAlert,
   X,
+  Link2,
+  MessageCircle,
 } from 'lucide-react';
 import { ClientShipmentProposal, TrailerUnit } from '../data/mockData';
 import { GoogleMapsAddressInput } from './GoogleMapsAddressInput';
 import { ClientDropdownSelect } from './ClientDropdownSelect';
+import {
+  computeCostBreakdown,
+  evaluateCorridorAlignment,
+} from '../utils/smartLogisticsEngine';
+import {
+  apiCreatePublicOfferLink,
+  apiSendNotification,
+  buildPublicOfferUrl,
+  type OfferLinkRecord,
+  type OutboxEntry,
+} from '../data/tmsSyncClient';
 
 interface ClientOffersViewProps {
   proposals: ClientShipmentProposal[];
@@ -22,6 +35,12 @@ interface ClientOffersViewProps {
   onCounterOfferProposal: (proposalId: string, counterEur: number) => void;
   onDeclineProposal: (proposalId: string) => void;
   onCreateNewProposal: (proposal: Omit<ClientShipmentProposal, 'id'>) => void;
+  authToken?: string;
+  tenantId?: string;
+  companyName?: string;
+  offerLinks?: OfferLinkRecord[];
+  onOfferLinkCreated?: (link: OfferLinkRecord) => void;
+  onNotificationSent?: (entry: OutboxEntry) => void;
 }
 
 export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
@@ -31,10 +50,21 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
   onCounterOfferProposal,
   onDeclineProposal,
   onCreateNewProposal,
+  authToken = '',
+  tenantId = 'blue-trans',
+  companyName = 'BLUE TRANS SPEDITION',
+  offerLinks = [],
+  onOfferLinkCreated,
+  onNotificationSent,
 }) => {
   const [selectedTrailerForEmail, setSelectedTrailerForEmail] = useState<string>('BH 67 STS');
   const [copiedEmail, setCopiedEmail] = useState(false);
   const [showClientFormModal, setShowClientFormModal] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState('dispo@danone-logistics.eu');
+  const [recipientPhone, setRecipientPhone] = useState('+40 744 000 000');
+  const [isSendingNotify, setIsSendingNotify] = useState(false);
+  const [isCreatingLink, setIsCreatingLink] = useState(false);
+  const [latestGeneratedUrl, setLatestGeneratedUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (showClientFormModal) {
@@ -73,21 +103,139 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
       ? Math.max(0, +(12.4 - viennaSegment.occupiedLdm).toFixed(1))
       : emailTrailer.freeLdm;
 
-  const handleCopyEmail = () => {
-    setCopiedEmail(true);
-    setTimeout(() => setCopiedEmail(false), 2500);
+  const activeRouteDisplay = emailTrailer.routeSummary.join(' → ');
+  const activeLoadingWindow =
+    viennaSegment?.etaStart && viennaSegment.etaStart !== '—'
+      ? `Fereastră rută: ${viennaSegment.etaStart}`
+      : 'Disponibil astăzi 15:30 – 17:30';
+  const lastSeg = emailTrailer.segments[emailTrailer.segments.length - 1];
+  const activeLatestDelivery =
+    lastSeg?.etaEnd && lastSeg.etaEnd !== '—'
+      ? `Sosire estimată: ${lastSeg.etaEnd} (${lastSeg.toCity})`
+      : 'Livrare 24–48h coridor TEN-T';
+
+  const existingLinkForTrailer = offerLinks.find((l) => l.trailerId === emailTrailer.id);
+  const effectivePublicUrl =
+    latestGeneratedUrl ||
+    (existingLinkForTrailer ? buildPublicOfferUrl(existingLinkForTrailer.token) : null);
+
+  const buildEmailProposalText = () =>
+    [
+      `Subject: Available Frigo Capacity (${commercialAvailableLdm.toFixed(1)} LDM @ ${emailTrailer.zone2Temp > 0 ? '+' : ''}${emailTrailer.zone2Temp}°C) — ${activeRouteDisplay}`,
+      '',
+      'We would like to inform you that we expect to have refrigerated transport capacity available:',
+      `• Route: ${activeRouteDisplay}`,
+      `• Trailer: ${emailTrailer.id}`,
+      `• Available capacity: ${commercialAvailableLdm.toFixed(1)} loading metres`,
+      `• Temperature: ${emailTrailer.zone2Temp > 0 ? '+' : ''}${emailTrailer.zone2Temp}°C`,
+      `• Loading window: ${activeLoadingWindow}`,
+      `• Latest delivery: ${activeLatestDelivery}`,
+      '',
+      effectivePublicUrl
+        ? `Submit your shipment & rate directly via secure client portal:\n${effectivePublicUrl}`
+        : 'Reply with your loading/unloading details, weight, temperature and offered freight rate.',
+      '',
+      `Best regards,\n${companyName}`,
+    ].join('\n');
+
+  const handleCopyEmail = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(buildEmailProposalText());
+      }
+      setCopiedEmail(true);
+      setActionToast('Textul comercial & link-ul au fost copiate în clipboard!');
+      setTimeout(() => setCopiedEmail(false), 2500);
+    } catch {
+      setCopiedEmail(true);
+      setTimeout(() => setCopiedEmail(false), 2500);
+    }
+  };
+
+  const handleCreatePublicLink = async () => {
+    if (!authToken) {
+      setActionToast('Autentifică-te pe server pentru a genera link-ul public securizat /ofertare.');
+      return;
+    }
+    setIsCreatingLink(true);
+    try {
+      const resp = await apiCreatePublicOfferLink(authToken, tenantId, {
+        trailerId: emailTrailer.id,
+        routeSummary: emailTrailer.routeSummary,
+        loadingWindow: activeLoadingWindow,
+        latestDelivery: activeLatestDelivery,
+        tempC: emailTrailer.zone2Temp,
+      });
+      if (resp.ok && resp.link) {
+        const fullUrl = buildPublicOfferUrl(resp.link.token);
+        setLatestGeneratedUrl(fullUrl);
+        onOfferLinkCreated?.(resp.link);
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(fullUrl).catch(() => {});
+        }
+        setActionToast(`Link securizat creat și copiat: ${fullUrl}`);
+      } else {
+        setActionToast(resp.error || 'Nu s-a putut genera link-ul public.');
+      }
+    } finally {
+      setIsCreatingLink(false);
+    }
+  };
+
+  const handleSendOutbound = async (channel: 'email' | 'whatsapp') => {
+    const body = buildEmailProposalText();
+    const subject = `Capacitate Frigo ${commercialAvailableLdm.toFixed(1)} LDM · ${activeRouteDisplay}`;
+    const to = channel === 'email' ? recipientEmail.trim() : recipientPhone.trim();
+    if (!to) {
+      setActionToast(`Completează destinatarul pentru ${channel === 'email' ? 'E-mail' : 'WhatsApp'}.`);
+      return;
+    }
+    setIsSendingNotify(true);
+    try {
+      if (authToken) {
+        const resp = await apiSendNotification(authToken, tenantId, {
+          channel,
+          to,
+          subject,
+          message: body,
+        });
+        if (resp.ok && resp.entry) {
+          onNotificationSent?.(resp.entry);
+          setActionToast(
+            channel === 'email'
+              ? `E-mail transmis (${resp.entry.deliveryMode}) către ${to}!`
+              : `Mesaj WhatsApp logat (${resp.entry.deliveryMode}) către ${to}!`
+          );
+          if (resp.entry.deliveryMode === 'outbox-preview') {
+            if (channel === 'email') {
+              window.open(`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+            } else {
+              const digits = to.replace(/[^0-9]/g, '');
+              window.open(`https://wa.me/${digits}?text=${encodeURIComponent(body)}`, '_blank');
+            }
+          }
+          return;
+        }
+      }
+      setActionToast(`Ofertă pregătită pentru ${to} (${channel}).`);
+    } finally {
+      setIsSendingNotify(false);
+    }
   };
 
   const handleSubmitClientSimulation = (e: React.FormEvent) => {
     e.preventDefault();
-    const incCost = Math.round(ldmReq * 55 + 30);
+    const corridor = evaluateCorridorAlignment(emailTrailer, routeFrom, routeTo);
+    const detourKm = corridor.matchesCorridor ? corridor.detourKm : 38;
+    const cost = computeCostBreakdown(ldmReq, detourKm);
+    const incCost = cost.totalIncrementalEur;
     const contrib = offeredPrice - incCost;
 
     onCreateNewProposal({
       trailerId: selectedTrailerForEmail,
       segmentLabel: `${routeFrom} → ${routeTo} (Disponibil: ${commercialAvailableLdm.toFixed(1)} LDM @ +${tempReq}°C)`,
       clientName,
-      clientContact: 'logistics@client-portal.eu',
+      clientContact: recipientEmail || 'logistics@client-portal.eu',
       routeFrom,
       routeTo,
       ldmRequested: ldmReq,
@@ -97,9 +245,9 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
       offeredPriceEur: offeredPrice,
       incrementalCostEur: incCost,
       estimatedContributionEur: contrib,
-      detourKm: 12,
-      loadingWindow: 'Mâine, 09:00 - 11:00',
-      latestDelivery: 'Poimâine, 15:00',
+      detourKm,
+      loadingWindow: activeLoadingWindow,
+      latestDelivery: activeLatestDelivery,
       status: 'Pending review',
       submittedAt: 'Chiar acum (din Portal Client)',
       hasConflictWarning: ldmReq > commercialAvailableLdm,
@@ -112,7 +260,7 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
     setShowClientFormModal(false);
     setMobileSection('proposals');
     setActionToast(
-      `Propunerea nouă de la "${clientName}" (${ldmReq} LDM, ${offeredPrice} €) a intrat în lista dispecerului în regim Soft-Lock!`
+      `Propunerea nouă de la "${clientName}" (${ldmReq} LDM, ${offeredPrice} €, ocol ${detourKm} km) a intrat în lista dispecerului în regim Soft-Lock!`
     );
   };
 
@@ -229,24 +377,24 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
                 <div className="grid grid-cols-3 gap-2 sm:gap-4 my-4 py-3.5 px-3.5 sm:px-5 rounded-2xl bg-black/30 border border-white/[0.07]">
                   <div>
                     <div className="text-[11px] sm:text-xs text-white/55">Preț oferit</div>
-                    <div className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
-                      {prop.offeredPriceEur} €
+                    <div className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5 whitespace-nowrap">
+                      {prop.offeredPriceEur}&#160;€
                     </div>
                   </div>
                   <div>
                     <div className="text-[11px] sm:text-xs text-white/55">
                       Cost suplimentar
                     </div>
-                    <div className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">
-                      {prop.incrementalCostEur} €
+                    <div className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5 whitespace-nowrap">
+                      {prop.incrementalCostEur}&#160;€
                     </div>
                   </div>
                   <div>
                     <div className="text-[11px] sm:text-xs text-white/55">
                       Contribuție estimată
                     </div>
-                    <div className="text-xl sm:text-2xl font-bold text-[#30D158] tracking-tight mt-0.5">
-                      {prop.estimatedContributionEur} €
+                    <div className="text-xl sm:text-2xl font-bold text-[#30D158] tracking-tight mt-0.5 whitespace-nowrap">
+                      {prop.estimatedContributionEur}&#160;€
                     </div>
                   </div>
                 </div>
@@ -398,10 +546,7 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
 
               <div className="space-y-1 text-white">
                 <div>
-                  <strong>Route:</strong>{' '}
-                  {selectedTrailerForEmail === 'BH 67 STS'
-                    ? 'Vienna → Cologne → Rotterdam'
-                    : emailTrailer.routeSummary.join(' → ')}
+                  <strong>Route:</strong> {activeRouteDisplay}
                 </div>
                 <div>
                   <strong>Available capacity:</strong>{' '}
@@ -410,13 +555,13 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
                   </span>
                 </div>
                 <div>
-                  <strong>Temperature:</strong> +{emailTrailer.zone2Temp}°C
+                  <strong>Temperature:</strong> {emailTrailer.zone2Temp > 0 ? '+' : ''}{emailTrailer.zone2Temp}°C
                 </div>
                 <div>
-                  <strong>Loading window:</strong> 10 Nov 2026, 15:30 – 17:30
+                  <strong>Loading window:</strong> {activeLoadingWindow}
                 </div>
                 <div>
-                  <strong>Latest delivery:</strong> 11 Nov 2026, 16:00
+                  <strong>Latest delivery:</strong> {activeLatestDelivery}
                 </div>
               </div>
 
@@ -425,12 +570,42 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
                 <span className="text-[#64D2FF]">we invite you to submit</span> your transport request using the link below:
               </p>
 
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleCreatePublicLink}
+                  disabled={isCreatingLink}
+                  className="flex-1 py-2.5 px-3.5 rounded-full bg-[#0A84FF]/20 hover:bg-[#0A84FF]/30 border border-[#0A84FF]/45 text-[#64D2FF] font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                >
+                  <Link2 className="w-4 h-4 shrink-0" />
+                  <span>{isCreatingLink ? 'Se generează link...' : 'Generează Link Public (/ofertare)'}</span>
+                </button>
+                {effectivePublicUrl && (
+                  <a
+                    href={effectivePublicUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2.5 px-3.5 rounded-full bg-[#30D158]/20 border border-[#30D158]/40 text-[#30D158] font-bold text-xs flex items-center gap-1.5 hover:bg-[#30D158]/30 transition"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Portal Client Live</span>
+                  </a>
+                )}
+              </div>
+
+              {effectivePublicUrl && (
+                <div className="px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-[11px] text-[#64D2FF] font-mono break-all">
+                  {effectivePublicUrl}
+                </div>
+              )}
+
               <button
+                type="button"
                 onClick={() => setShowClientFormModal(true)}
-                className="w-full py-3 px-4 rounded-full bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 border border-[#0A84FF]/40 text-[#64D2FF] font-bold text-xs tracking-wide flex items-center justify-center gap-2 transition cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-full bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-white/90 font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
               >
-                <ExternalLink className="w-4 h-4 shrink-0" />
-                [SUBMIT YOUR SHIPMENT & OFFER YOUR RATE]
+                <Sparkles className="w-3.5 h-3.5 text-[#FF9F0A]" />
+                <span>Simulează Formular Client Intern</span>
               </button>
 
               <p className="text-[#64D2FF]/90 text-xs">
@@ -444,32 +619,55 @@ export const ClientOffersView: React.FC<ClientOffersViewProps> = ({
               <div className="pt-2 border-t border-white/[0.08] text-xs">
                 <div className="text-white/60">Best regards,</div>
                 <div className="font-bold text-[#64D2FF] tracking-wide mt-0.5">
-                  BLUE TRANS SPEDITION
+                  {companyName}
                 </div>
               </div>
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <input
+                type="email"
+                value={recipientEmail}
+                onChange={(e) => setRecipientEmail(e.target.value)}
+                placeholder="Email client destinatar..."
+                className="bg-black/40 border border-white/15 rounded-full px-3.5 py-2 text-white placeholder-white/40"
+              />
+              <input
+                type="text"
+                value={recipientPhone}
+                onChange={(e) => setRecipientPhone(e.target.value)}
+                placeholder="WhatsApp (+40 / +49...)"
+                className="bg-black/40 border border-white/15 rounded-full px-3.5 py-2 text-white placeholder-white/40"
+              />
+            </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
               onClick={handleCopyEmail}
-              className="flex-1 py-2.5 px-4 rounded-full bg-white text-black font-semibold text-xs flex items-center justify-center gap-2 transition hover:bg-white/90 cursor-pointer"
+              className="flex-1 min-w-[140px] py-2.5 px-4 rounded-full bg-white text-black font-semibold text-xs flex items-center justify-center gap-1.5 transition hover:bg-white/90 cursor-pointer"
             >
               <Copy className="w-3.5 h-3.5" />
-              {copiedEmail ? 'Link Copiat ' : 'Copy shipment proposal (demo)'}
+              {copiedEmail ? 'Copiat ✓' : 'Copiază Ofertă + Link'}
             </button>
             <button
-              onClick={() =>
-                setActionToast(
-                  `E-mailul de disponibilitate (${commercialAvailableLdm.toFixed(
-                    1
-                  )} LDM pe ${selectedTrailerForEmail}) a fost trimis către clienții de pe rută!`
-                )
-              }
-              className="tahoe-btn-primary py-2.5 px-4 rounded-full text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+              type="button"
+              disabled={isSendingNotify}
+              onClick={() => void handleSendOutbound('email')}
+              className="tahoe-btn-primary py-2.5 px-4 rounded-full text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <Send className="w-3.5 h-3.5" />
-              Trimite
+              <span>E-mail</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSendingNotify}
+              onClick={() => void handleSendOutbound('whatsapp')}
+              className="py-2.5 px-4 rounded-full bg-[#30D158]/20 border border-[#30D158]/40 text-[#30D158] hover:bg-[#30D158]/30 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span>WhatsApp</span>
             </button>
           </div>
         </div>
